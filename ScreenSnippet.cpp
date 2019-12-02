@@ -6,6 +6,8 @@
 #include <inttypes.h>
 #include <math.h>
 
+#pragma comment( lib, "user32.lib" )
+#pragma comment( lib, "gdi32.lib" )
 #pragma comment( lib, "gdiplus.lib" )
 
 #define WINDOW_CLASS_NAME "SymphonyScreenSnippetTool"
