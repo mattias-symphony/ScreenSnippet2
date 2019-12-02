@@ -815,7 +815,16 @@ int main( int argc, char* argv[] ) {
 		Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
 		CLSID pngClsid;
 		Gdiplus::GetEncoderClsid( L"image/png", &pngClsid );
-		bmp.Save( L"image.png",&pngClsid, NULL );	    
+ 		wchar_t* filename = 0;
+		if( argc > 1 ) {
+			size_t len = strlen( argv[ 1 ] ) + 1;
+			filename = new wchar_t[ len ];
+			mbstowcs( filename, argv[ 1 ], len );
+		}
+		bmp.Save( filename ? filename : L"image.png", &pngClsid, NULL );
+		if( filename ) {
+			delete[] filename;
+		}
 
 		DeleteObject( snippet );
 		return result;
