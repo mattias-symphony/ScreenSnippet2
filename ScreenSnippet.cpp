@@ -817,9 +817,9 @@ int main( int argc, char* argv[] ) {
 		Gdiplus::GetEncoderClsid( L"image/png", &pngClsid );
  		wchar_t* filename = 0;
 		if( argc > 1 ) {
-			size_t len = strlen( argv[ 1 ] ) + 1;
-			filename = new wchar_t[ len ];
-			mbstowcs( filename, argv[ 1 ], len );
+			size_t len = strlen( argv[ 1 ] );
+			filename = new wchar_t[ len + 1 ];
+			mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
 		}
 		bmp.Save( filename ? filename : L"image.png", &pngClsid, NULL );
 		if( filename ) {
