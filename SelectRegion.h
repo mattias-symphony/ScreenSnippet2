@@ -1,31 +1,78 @@
 
 
-struct Window {
-	HWND hwnd;
-	HDC backbuffer;
+
+static void swap( LONG* a, LONG* b ) {
+	LONG t = *a;
+	*a = *b;
+	*b = t;
+}
+
+
+// Holds current state for a specific display during region selection
+struct Display {
+	HWND hwnd; // The window covering the display
+	HDC backbuffer; // Device context for offscreen draw target for the display
 	POINT prevTopLeft;	
 	POINT prevBottomRight;	
 };
 
 
+int const MAX_DISPLAYS = 256; // Hard limit of 256 displays..
+
+
 struct SelectRegionData {
-	HPEN pen;	
-	HPEN eraser;	
-	HBRUSH background;
-	HBRUSH transparent;
-	POINT topLeft;	
-	POINT bottomRight;	
-	BOOL dragging;
-	BOOL done;
-	BOOL aborted;
-	RECT region;
-	int windowCount;
-	Window windows[ 256 ];
+	HPEN pen; // Pen to use for drawing the frame	
+	HPEN eraser; // Pen to use to erase the frame (same color as background)
+	HBRUSH background; // Brush to use for erasing the insides of the rect (same color as eraser)
+	HBRUSH transparent; // Brush to use for filling the inside of the frame (the color used as transparency mask)
+	POINT topLeft; // The point on the virtual desktop, in screen coordinate space, of the region origin
+	POINT bottomRight;// The point on the virtual desktop, in screen coordinate space, of the current region drag point
+	BOOL dragging; // Will be TRUE once the user press the left mouse button and starts dragging
+	BOOL done; // Will be TRUE when the user release the left mouse button and region select is completed
+	BOOL aborted; // Will be TRUE if the user press Esc to abort region selection
+	int displayCount; // Number of displays
+	Display displays[ MAX_DISPLAYS ]; // Current state for each display
 };
 
 
+// Check for mouse move, mouse button release and ESC keypress at regular intervals
+static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms ) {
+	struct SelectRegionData* selectRegionData = (struct SelectRegionData*) id;
 
-void drawRect( HWND hwnd, HDC dc, POINT a, POINT b ) {
+	// Read current mouse pos in screen coordinates
+	POINT p;
+	GetCursorPos( &p );
+
+	// Abort if user press Esc
+	if( (GetAsyncKeyState( VK_ESCAPE ) & 0x8000 ) != 0 ) {
+		selectRegionData->aborted = TRUE;
+	}
+
+	// Update dragging rect
+	if( selectRegionData->dragging ) {
+		selectRegionData->bottomRight.x = p.x;
+		selectRegionData->bottomRight.y = p.y;
+		// Invalidate each window to cause redraw of rect
+		for( int i = 0; i < selectRegionData->displayCount; ++i ) {
+			InvalidateRect( selectRegionData->displays[ i ].hwnd, NULL, FALSE );
+		}
+	}
+
+	// Check if user have let go of mouse button
+	if( selectRegionData->dragging && ( GetAsyncKeyState( VK_LBUTTON ) & 0x8000 ) == 0 ) {
+		// Complete region selection
+		selectRegionData->dragging = FALSE;
+		selectRegionData->done = TRUE;
+	}
+
+	// Set this function to be called again in 16ms ( we update at ~60hz)
+	SetTimer( hwnd, (UINT_PTR)selectRegionData, 16, timerProc );
+}
+
+
+// Draws a rectangle in the client area, given two points in screenspace coordinates
+// Only creates a draw path, which caller can draw using StrokeAndFillPath
+static void drawRect( HWND hwnd, HDC dc, POINT a, POINT b ) {
 	ScreenToClient( hwnd, &a );
 	ScreenToClient( hwnd, &b );
 	BeginPath( dc );
@@ -38,71 +85,41 @@ void drawRect( HWND hwnd, HDC dc, POINT a, POINT b ) {
 }
 
 
-static void CALLBACK updateMouseTimerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms ) {
-	POINT p;
-	GetCursorPos( &p );
-
-	struct SelectRegionData* selectRegionData = (struct SelectRegionData*) id;
-
-	if( (GetAsyncKeyState( VK_ESCAPE ) & 0x8000 ) != 0 ) {
-		selectRegionData->aborted = TRUE;
-	}
-
-	if( selectRegionData->dragging ) {
-		selectRegionData->bottomRight.x = p.x;
-		selectRegionData->bottomRight.y = p.y;
-		for( int i = 0; i < selectRegionData->windowCount; ++i ) {
-			InvalidateRect( selectRegionData->windows[ i ].hwnd, NULL, FALSE );
-		}
-	}
-
-	if( selectRegionData->dragging && ( GetAsyncKeyState( VK_LBUTTON ) & 0x8000 ) == 0 ) {
-		selectRegionData->dragging = FALSE;
-		selectRegionData->done = TRUE;
-		POINT topLeft = selectRegionData->topLeft;
-		POINT bottomRight = selectRegionData->bottomRight;
-		selectRegionData->region.left = topLeft.x;
-		selectRegionData->region.top = topLeft.y;
-		selectRegionData->region.right = bottomRight.x;
-		selectRegionData->region.bottom = bottomRight.y;
-		for( int i = 0; i < selectRegionData->windowCount; ++i ) {
-			InvalidateRect( selectRegionData->windows[ i ].hwnd, NULL, FALSE );
-		}
-	}
-
-	SetTimer( hwnd, (UINT_PTR)selectRegionData, 16, updateMouseTimerProc );
-}
-
-
 static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
 	struct SelectRegionData* selectRegionData = (struct SelectRegionData*) GetWindowLongPtrA( hwnd, GWLP_USERDATA );
 	switch( message ) {
 		case WM_ERASEBKGND: {
+			// Only do the default background clear before the user starts dragging
+			// Once dragging starts, we clear by erasing the previous rect
 			if( selectRegionData && selectRegionData->dragging ) {
 				return 1;
 			}
 		} break;
 		case WM_PAINT: {
-			struct Window* window = NULL;
+			// Find the Display instance for this window
+			struct Display* display = NULL;
 			int index = 0;
-			for( int i = 0; i < selectRegionData->windowCount; ++i ) {
-				if( selectRegionData->windows[ i ].hwnd == hwnd ) {
-					window = &selectRegionData->windows[ i ];
+			for( int i = 0; i < selectRegionData->displayCount; ++i ) {
+				if( selectRegionData->displays[ i ].hwnd == hwnd ) {
+					display = &selectRegionData->displays[ i ];
 					break;
 				}
 			}
-			if( window ) {
+
+			// Draw the current dragged rect onto this window - we draw regardless of whether the rect is inside the
+			// window or not - we just let windows handle clipping for us
+			if( selectRegionData->dragging && display ) {
 				// erase previous rect
-				drawRect( hwnd, window->backbuffer, window->prevTopLeft, window->prevBottomRight );
-				SelectObject( window->backbuffer, selectRegionData->eraser );
-				SelectObject( window->backbuffer, selectRegionData->background );
-				StrokeAndFillPath( window->backbuffer );
+				drawRect( hwnd, display->backbuffer, display->prevTopLeft, display->prevBottomRight );
+				SelectObject( display->backbuffer, selectRegionData->eraser );
+				SelectObject( display->backbuffer, selectRegionData->background );
+				StrokeAndFillPath( display->backbuffer );
 			
 				// draw current rect
-				drawRect( hwnd, window->backbuffer, selectRegionData->topLeft, selectRegionData->bottomRight );
-				SelectObject( window->backbuffer, selectRegionData->pen );
-				SelectObject( window->backbuffer, selectRegionData->transparent );
-				StrokeAndFillPath( window->backbuffer );
+				drawRect( hwnd, display->backbuffer, selectRegionData->topLeft, selectRegionData->bottomRight );
+				SelectObject( display->backbuffer, selectRegionData->pen );
+				SelectObject( display->backbuffer, selectRegionData->transparent );
+				StrokeAndFillPath( display->backbuffer );
 
 				POINT cp1 = selectRegionData->topLeft;
 				POINT cp2 = selectRegionData->bottomRight;
@@ -115,8 +132,8 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
 				ScreenToClient( hwnd, &cp1 );
 				ScreenToClient( hwnd, &cp2 );
 				RECT curr = { cp1.x, cp1.y, cp2.x, cp2.y };
-				POINT pp1 = window->prevTopLeft;
-				POINT pp2 = window->prevBottomRight;
+				POINT pp1 = display->prevTopLeft;
+				POINT pp2 = display->prevBottomRight;
 				if( pp1.x > pp2.x ) {
 					swap( &pp1.x, &pp2.x );
 				}
@@ -136,13 +153,13 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
 				IntersectRect( &bounds, &frame, &client );
 				InflateRect( &bounds, 4, 4 );
 			
-				window->prevTopLeft = selectRegionData->topLeft;
-				window->prevBottomRight = selectRegionData->bottomRight;
+				display->prevTopLeft = selectRegionData->topLeft;
+				display->prevBottomRight = selectRegionData->bottomRight;
 
 				PAINTSTRUCT ps; 
 				HDC dc = BeginPaint( hwnd, &ps );
 				BitBlt( dc, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, 
-					window->backbuffer, bounds.left, bounds.top, SRCCOPY );
+					display->backbuffer, bounds.left, bounds.top, SRCCOPY );
 				EndPaint( hwnd, &ps );
 			}
 		} break;
@@ -160,20 +177,28 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
     return DefWindowProc( hwnd, message, wparam, lparam);
 }
 
+
+// Holds a list of bounding rects for all displays
 struct FindScreensData {
 	int count;
-	RECT bounds[ 256 ];
+	RECT bounds[ MAX_DISPLAYS ];
 };
 
 
+// Callback used when enumerating displays. Just adds each bounding rect to the list.
 static BOOL CALLBACK findScreens( HMONITOR monitor, HDC dc, LPRECT rect, LPARAM lparam ) {	
 	struct FindScreensData* findScreensData = (struct FindScreensData*) lparam;
 	findScreensData->bounds[ findScreensData->count++ ] = *rect;
+	if( findScreensData->count >= sizeof( findScreensData->bounds ) / sizeof( *findScreensData->bounds ) ) {
+		return FALSE;
+	}
 	return TRUE;
 }
 
 
-int selectRegion( RECT* region ) {
+// Let the user select a region of the full virtual desktop. Selction may span multiple displays.
+static int selectRegion( RECT* region ) {
+	// Enumerate all displays
 	struct FindScreensData findScreensData = { 0 };
 	EnumDisplayMonitors( NULL, NULL, findScreens, (LPARAM) &findScreensData );
 	if( findScreensData.count <= 0 ) {
@@ -184,14 +209,15 @@ int selectRegion( RECT* region ) {
 	COLORREF transparent = RGB( 0, 255, 0 );
 	COLORREF background = RGB( 0, 0, 0 );
 
+	// Data passed to each selection window to track state
 	struct SelectRegionData selectRegionData = { 
 		CreatePen( PS_SOLID, 2, frame ),
 		CreatePen( PS_SOLID, 2, background ),
 		CreateSolidBrush( background ),
 		CreateSolidBrush( transparent ),
 	};
-
-
+	
+	// Register window class
 	WNDCLASSW wc = { 
 		CS_OWNDC | CS_HREDRAW | CS_VREDRAW, // style
 		(WNDPROC) selectRegionWndProc, 		// lpfnWndProc
@@ -207,67 +233,88 @@ int selectRegion( RECT* region ) {
     RegisterClassW( &wc );
 
 
+	// Create a window for each display, covering it entirely as a semi-transparent overlay
 	int count = findScreensData.count;
-	HWND hwnd[ 256 ] = { NULL };
-	selectRegionData.windowCount = count;
+	HWND hwnd[ MAX_DISPLAYS ] = { NULL };
+	selectRegionData.displayCount = count;
 	for( int i = 0; i < count; ++i ) {
-		struct Window* window = &selectRegionData.windows[ i ];
+		struct Display* display = &selectRegionData.displays[ i ];
 		RECT bounds = findScreensData.bounds[ i ];
-		hwnd[ i ] = window->hwnd = CreateWindowExW( WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, wc.lpszClassName, 
+		hwnd[ i ] = display->hwnd = CreateWindowExW( WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, wc.lpszClassName, 
 			NULL, WS_VISIBLE, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, 
 			NULL, NULL, GetModuleHandleA( NULL ), 0 );
 		
-
-		HDC dc = GetDC( window->hwnd );
+		// Create off-screen drawing surface for window
+		HDC dc = GetDC( display->hwnd );
 		HBITMAP backbuffer = CreateCompatibleBitmap( dc, bounds.right - bounds.left, bounds.bottom - bounds.top );
-		window->backbuffer = CreateCompatibleDC( dc );
-		SelectObject( window->backbuffer, backbuffer );
-		ReleaseDC( window->hwnd, dc );
+		display->backbuffer = CreateCompatibleDC( dc );
+		SelectObject( display->backbuffer, backbuffer );
+		ReleaseDC( display->hwnd, dc );
 
+		// Set window transparency
 		SetWindowLongPtrA( hwnd[ i ], GWLP_USERDATA, (LONG_PTR)&selectRegionData );
-		SetWindowLongA(hwnd[ i ], GWL_STYLE, WS_VISIBLE );
-		SetLayeredWindowAttributes(hwnd[ i ], transparent, 100, LWA_ALPHA | LWA_COLORKEY);
+		SetWindowLongA( hwnd[ i ], GWL_STYLE, WS_VISIBLE );
+		SetLayeredWindowAttributes( hwnd[ i ], transparent, 100, LWA_ALPHA | LWA_COLORKEY );
 		UpdateWindow( hwnd[ i ] );
 	}
 
-	updateMouseTimerProc( hwnd[ 0 ], 0, (UINT_PTR)&selectRegionData, 0 );
+	// Call timer function directly - it will set up a timer based call to itself as the last thing it does
+	timerProc( hwnd[ 0 ], 0, (UINT_PTR)&selectRegionData, 0 );
 
+	// Main loop, keeps running while there are still windows open, and the user have not aborted or completed selection
 	int running = count;
 	while( running && !selectRegionData.done && !selectRegionData.aborted )  {
+		// Process messages for each window
 		for( int i = 0; i < count; ++i ) {
 			if( hwnd[ i ] ) {
 				MSG msg = { NULL };
+				// Normally we would use GetMessage rather than PeekMessage, but it would block the processing of the 
+				// other windows, and require us to run each windows processing on a separate thread. PeekMessage allows
+				// us to interleave the message loop for all windows, but would max out the thread if we don't add an
+				// explicity `Sleep` to the loop.
 				while( PeekMessageA( &msg, hwnd[ i ], 0, 0, PM_REMOVE ) ) {
-					if( msg.message == WM_CLOSE ) {
-						DestroyWindow( hwnd[ i ] );
+					if( msg.message == WM_CLOSE ) { // Detect closing of windows
+						DestroyWindow( hwnd[ i ] ); 
 						hwnd[ i ] = NULL;
 						--running;
 					}
-					TranslateMessage(&msg);
-					DispatchMessage(&msg);
+					TranslateMessage( &msg );
+					DispatchMessage( &msg );
 				}
-				Sleep( 10 );
 			}
 		}
+		Sleep( 16 ); // Limit the update rate, as we use PeekMessage rather then GetMessage which would be blocking
 	}
 
+	// Cleanup
 	for( int i = 0; i < count; ++i ) {
 		if( hwnd[ i ] ) {
 			DestroyWindow( hwnd[ i ] );
 		}
 	}
-
 	DeleteObject( selectRegionData.pen );
 	DeleteObject( selectRegionData.eraser );
 	DeleteObject( selectRegionData.background );
 	DeleteObject( selectRegionData.transparent );
 	UnregisterClassW( wc.lpszClassName, GetModuleHandleW( NULL ) );
 	
+	// If the user aborted, we don't return the region
 	if( selectRegionData.aborted ) {
 		return EXIT_FAILURE;
 	}
 
-	*region = selectRegionData.region;
+	RECT selectedRegion = { selectRegionData.topLeft.x, selectRegionData.topLeft.y, 
+		selectRegionData.bottomRight.x, selectRegionData.bottomRight.y, };
+
+	// Swap top/bottom and left/right as necessary (user can drag in any direction they want)	
+	if( selectedRegion.left > selectedRegion.right ) {
+		swap( &selectedRegion.left, &selectedRegion.right );
+	}
+	if( selectedRegion.top > selectedRegion.bottom ) {
+		swap( &selectedRegion.top, &selectedRegion.bottom );
+	}
+
+	*region = selectedRegion;
 	return EXIT_SUCCESS;
 }
 

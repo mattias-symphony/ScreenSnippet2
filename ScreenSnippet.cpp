@@ -15,74 +15,63 @@
 
 #define WINDOW_CLASS_NAME L"SymphonyScreenSnippetTool"
 
-void swap( LONG* a, LONG* b );
-
 #include "SelectRegion.h"
 #include "Localization.h"
 #include "MakeAnnotations.h"
 
+// Grab a section of the screen
+static HBITMAP grabSnippet( POINT topLeft, POINT bottomRight ) {
+    HDC screen = GetDC( NULL );
+    HDC dc = CreateCompatibleDC( screen );
+    HBITMAP snippet = CreateCompatibleBitmap( screen, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y );
+    HGDIOBJ oldObject = SelectObject( dc, snippet );
+    
+	BitBlt( dc, 0, 0, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y, screen, topLeft.x, topLeft.y, SRCCOPY );
 
-void swap( LONG* a, LONG* b ) {
-	LONG t = *a;
-	*a = *b;
-	*b = t;
+    SelectObject( dc, oldObject );
+    DeleteDC( dc );
+    ReleaseDC( NULL, screen );
+
+	return snippet;
 }
 
+// Utility function used to get an encoder for PNG image format
+static int GetEncoderClsid( const WCHAR* format, CLSID* pClsid ) {
+	UINT num = 0; // number of image encoders
+	UINT size = 0; // size of the image encoder array in bytes
 
-HBITMAP grabSnippet( POINT a, POINT b ) {
-    HDC hScreen = GetDC( NULL );
-    HDC hDC = CreateCompatibleDC( hScreen );
-    HBITMAP hBitmap = CreateCompatibleBitmap( hScreen, abs( b.x - a.x ), abs( b.y - a.y ) );
-    HGDIOBJ old_obj = SelectObject( hDC, hBitmap );
-    BOOL bRet = BitBlt( hDC, 0, 0, abs( b.x - a.x ), abs( b.y - a.y ), hScreen, a.x, a.y, SRCCOPY );
+	Gdiplus::ImageCodecInfo* pImageCodecInfo = NULL;
 
-    SelectObject( hDC, old_obj );
-    DeleteDC( hDC );
-    ReleaseDC( NULL, hScreen );
-
-	return hBitmap;
-}
-
-
-namespace Gdiplus {
-
-	int GetEncoderClsid( const WCHAR* format, CLSID* pClsid ) {
-		UINT num = 0; // number of image encoders
-		UINT size = 0; // size of the image encoder array in bytes
-
-		ImageCodecInfo* pImageCodecInfo = NULL;
-
-		GetImageEncodersSize( &num, &size );
-		if( size == 0 ) {
-			return -1;
-		}
-
-		pImageCodecInfo = (ImageCodecInfo*) malloc( size );
-		if( pImageCodecInfo == NULL ) {
-			return -1;
-		}
-
-		GetImageEncoders( num, size, pImageCodecInfo );
-
-		for( UINT j = 0; j < num; ++j ) {
-			if( wcscmp( pImageCodecInfo[ j ].MimeType, format ) == 0 ) {
-				*pClsid = pImageCodecInfo[ j ].Clsid;
-				free( pImageCodecInfo );
-				return j;
-			}
-		}
-
-		free( pImageCodecInfo );
+	Gdiplus::GetImageEncodersSize( &num, &size );
+	if( size == 0 ) {
 		return -1;
 	}
 
-} /* namespace Gdiplus */
+	pImageCodecInfo = (Gdiplus::ImageCodecInfo*) malloc( size );
+	if( pImageCodecInfo == NULL ) {
+		return -1;
+	}
+
+	GetImageEncoders( num, size, pImageCodecInfo );
+
+	for( UINT j = 0; j < num; ++j ) {
+		if( wcscmp( pImageCodecInfo[ j ].MimeType, format ) == 0 ) {
+			*pClsid = pImageCodecInfo[ j ].Clsid;
+			free( pImageCodecInfo );
+			return j;
+		}
+	}
+
+	free( pImageCodecInfo );
+	return -1;
+}
 
 
 int main( int argc, char* argv[] ) {
 	FreeConsole();
-	SetProcessDPIAware();
+	SetProcessDPIAware(); // Avoid DPI scaling affecting the resolution of the grabbed snippet
 
+	// Find language matching command line arg
 	int lang = 0; // default to 'en-US'
 	if( argc == 3 ) {
 		char const* lang_str = argv[ 2 ];
@@ -99,17 +88,11 @@ int main( int argc, char* argv[] ) {
 	ULONG_PTR gdiplusToken;
 	Gdiplus::GdiplusStartup( &gdiplusToken, &gdiplusStartupInput, NULL );
 
+	// Let the user select a region on the screen
 	RECT region;
-	if( selectRegion( &region ) == EXIT_SUCCESS ) {
-		// Swap top/bottom and left/right as necessary		
+	if( selectRegion( &region ) == EXIT_SUCCESS ) { 
 		POINT topLeft = { region.left, region.top };
 		POINT bottomRight = { region.right, region.bottom };
-		if( topLeft.x > bottomRight.x ) {
-			swap( &topLeft.x, &bottomRight.x );
-		}
-		if( topLeft.y > bottomRight.y ) {
-			swap( &topLeft.y, &bottomRight.y );
-		}
 
 		// Enforce a minumum size (to avoid ending up with an image you can't even see in the annotation window)
 		if( bottomRight.x - topLeft.x < 32 ) {
@@ -119,23 +102,27 @@ int main( int argc, char* argv[] ) {
 			bottomRight.y = topLeft.y + 32;
 		}
 		
+		// Grab a bitmap of the selected region
 		HBITMAP snippet = grabSnippet( topLeft, bottomRight );
+
+		// Let the user annotate the screen snippet with drawings
 		RECT bounds = { 0, 0, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y };
 		int result = makeAnnotations( snippet, bounds, lang );
 		if( result == EXIT_SUCCESS ) {
 			// Save annotated bitmap
 			Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
 			CLSID pngClsid;
-			Gdiplus::GetEncoderClsid( L"image/png", &pngClsid );
-			wchar_t* filename = 0;
-			if( argc > 1 ) {
-			    size_t len = strlen( argv[ 1 ] );
-			    filename = new wchar_t[ len + 1 ];
-			    mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
-			}
-			bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
-			if( filename ) {
-			    delete[] filename;
+			if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
+				wchar_t* filename = 0;
+				if( argc > 1 ) {
+					size_t len = strlen( argv[ 1 ] );
+					filename = new wchar_t[ len + 1 ];
+					mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
+				}
+				bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
+				if( filename ) {
+					delete[] filename;
+				}
 			}
         }
 
@@ -145,6 +132,7 @@ int main( int argc, char* argv[] ) {
 	Gdiplus::GdiplusShutdown( gdiplusToken );
 	return EXIT_SUCCESS;
 }
+
 
 // pass-through so the program will build with either /SUBSYSTEM:WINDOWS or /SUBSYSTEM:CONSOLE
 extern "C" int __stdcall WinMain( struct HINSTANCE__*, struct HINSTANCE__*, char*, int ) { 

@@ -53,7 +53,7 @@ void addStrokePoint( struct MakeAnnotationsData* data, POINT* p, BOOL force ) {
 			int dx = stroke->points[ stroke->count - 1 ].x - p->x;
 			int dy = stroke->points[ stroke->count - 1 ].y - p->y;
 			int dist = (int)sqrtf( (float)( dx * dx + dy * dy ) );
-			if( dist < ( force ? 5 : ( data->highlighter ? 30 : 15 ) ) ) {
+			if( dist < ( force ? 5 : ( data->highlighter ? 25 : 15 ) ) ) {
 				return;
 			}
 		}
@@ -148,16 +148,23 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
 
 			for( int i = 0; i < data->strokeCount; ++i ) {
 				struct Stroke* stroke = &data->strokes[ i ];
+				Gdiplus::Pen* pen = stroke->highlighter ? 
+					data->highlighters[ stroke->penIndex ] : 
+					data->pens[ stroke->penIndex ];
 				if( stroke->count > 1 ) {			
 					Gdiplus::Point* points = new Gdiplus::Point[ stroke->count ];
 					for( int j = 0; j < stroke->count; ++j ) {
 						points[ j ].X = stroke->points[ j ].x;
 						points[ j ].Y = stroke->points[ j ].y;
 					}
-					Gdiplus::Pen* pen = stroke->highlighter ? 
-						data->highlighters[ stroke->penIndex ] : 
-						data->pens[ stroke->penIndex ];
 					graphics.DrawCurve( pen, points, stroke->count );
+				}
+				if( i == data->strokeCount -1 && !stroke->highlighter && data->penDown && stroke->count > 0 ) {
+					POINT mouse;
+					GetCursorPos( &mouse );
+					ScreenToClient( hwnd, &mouse );
+					POINT p = stroke->points[ stroke->count - 1 ];
+					graphics.DrawLine( pen, p.x, p.y, mouse.x, mouse.y - 50 );
 				}
 			}
 
@@ -289,8 +296,8 @@ int makeAnnotations( HBITMAP snippet, RECT bounds, int lang ) {
 	};
 
 	Gdiplus::Pen* highlights[] = {
-		new Gdiplus::Pen( Gdiplus::Color( 128, 255, 255, 64 ), 34 ),
-		new Gdiplus::Pen( Gdiplus::Color( 128, 150, 100, 150), 34 )
+		new Gdiplus::Pen( Gdiplus::Color( 128, 255, 255, 64 ), 28 ),
+		new Gdiplus::Pen( Gdiplus::Color( 128, 150, 100, 150), 28 )
 	};
 
 	Gdiplus::Pen* penEraser = new Gdiplus::Pen( Gdiplus::Color( 0, 0, 0, 0), 25 );
