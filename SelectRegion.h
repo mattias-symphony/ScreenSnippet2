@@ -360,7 +360,7 @@ static int selectRegion( RECT* region ) {
 	UnregisterClassW( wc.lpszClassName, GetModuleHandleW( NULL ) );
 	
 	// If the user aborted, we don't return the region
-	if( selectRegionData.aborted ) {
+	if( !selectRegionData.done ) {
 		return EXIT_FAILURE;
 	}
 

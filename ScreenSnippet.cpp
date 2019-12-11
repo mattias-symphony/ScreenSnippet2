@@ -68,8 +68,26 @@ static int GetEncoderClsid( const WCHAR* format, CLSID* pClsid ) {
 }
 
 
+static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {	
+	wchar_t className[ 256 ] = L"";
+	GetClassNameW( hwnd, className, sizeof( className ) );
+
+	if( wcscmp( className, WINDOW_CLASS_NAME ) == 0 ) {
+		PostMessageA( hwnd, WM_CLOSE, 0, 0 );
+		*(BOOL*)lparam = TRUE;
+	}
+
+	return TRUE;
+}
+
+
 int main( int argc, char* argv[] ) {
 	SetProcessDPIAware(); // Avoid DPI scaling affecting the resolution of the grabbed snippet
+	BOOL windowsClosed = FALSE;
+	EnumWindows( closeExistingInstance, (LPARAM) &windowsClosed );
+	if( windowsClosed ) {
+		return EXIT_SUCCESS;
+	}
 
 	// Find language matching command line arg
 	int lang = 0; // default to 'en-US'
