@@ -19,6 +19,7 @@
 #include "Localization.h"
 #include "MakeAnnotations.h"
 
+
 // Grab a section of the screen
 static HBITMAP grabSnippet( POINT topLeft, POINT bottomRight ) {
     HDC screen = GetDC( NULL );
@@ -68,7 +69,6 @@ static int GetEncoderClsid( const WCHAR* format, CLSID* pClsid ) {
 
 
 int main( int argc, char* argv[] ) {
-	FreeConsole();
 	SetProcessDPIAware(); // Avoid DPI scaling affecting the resolution of the grabbed snippet
 
 	// Find language matching command line arg

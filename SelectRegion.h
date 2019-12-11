@@ -11,7 +11,11 @@ static void swap( LONG* a, LONG* b ) {
 // Holds current state for a specific display during region selection
 struct Display {
 	HWND hwnd; // The window covering the display
+	MONITORINFOEXA info;
+	DEVMODEA mode;
 	HDC backbuffer; // Device context for offscreen draw target for the display
+	POINT topLeft;
+	POINT bottomRight;
 	POINT prevTopLeft;	
 	POINT prevBottomRight;	
 };
@@ -35,6 +39,28 @@ struct SelectRegionData {
 };
 
 
+static void windowToGlobal( struct Display* display, POINT* p ) {
+	RECT monRect = display->info.rcMonitor;
+	int width = display->mode.dmPelsWidth;
+	int height = display->mode.dmPelsHeight;
+	double sx = ( monRect.right - monRect.left ) / (double) width;
+	double sy = ( monRect.bottom - monRect.top ) / (double) height;
+	p->x = display->mode.dmPosition.x + (int)( p->x / sx );
+	p->y = display->mode.dmPosition.y + (int)( p->y / sy );
+}
+
+
+static void globalToWindow( struct Display* display, POINT* p ) {
+	RECT monRect = display->info.rcMonitor;
+	int width = display->mode.dmPelsWidth;
+	int height = display->mode.dmPelsHeight;
+	double sx = ( monRect.right - monRect.left ) / (double) width;
+	double sy = ( monRect.bottom - monRect.top ) / (double) height;
+	p->x = (int)( ( p->x - display->mode.dmPosition.x ) * sx );
+	p->y = (int)( ( p->y - display->mode.dmPosition.y ) * sy );
+}
+
+
 // Check for mouse move, mouse button release and ESC keypress at regular intervals
 static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms ) {
 	struct SelectRegionData* selectRegionData = (struct SelectRegionData*) id;
@@ -43,18 +69,34 @@ static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms )
 	POINT p;
 	GetCursorPos( &p );
 
+	BOOL found = FALSE;
+	for( int i = 0; i < selectRegionData->displayCount; ++i ) {
+		RECT r;
+		GetWindowRect( selectRegionData->displays[ i ].hwnd, &r );		
+		++r.right;
+		++r.bottom;
+		if( PtInRect( &r, p ) ) {
+			ScreenToClient( selectRegionData->displays[ i ].hwnd, &p );
+			windowToGlobal( &selectRegionData->displays[ i ], &p );
+			found = TRUE;
+			break;
+		} 
+	}
+
 	// Abort if user press Esc
 	if( (GetAsyncKeyState( VK_ESCAPE ) & 0x8000 ) != 0 ) {
 		selectRegionData->aborted = TRUE;
 	}
 
-	// Update dragging rect
-	if( selectRegionData->dragging ) {
-		selectRegionData->bottomRight.x = p.x;
-		selectRegionData->bottomRight.y = p.y;
-		// Invalidate each window to cause redraw of rect
-		for( int i = 0; i < selectRegionData->displayCount; ++i ) {
-			InvalidateRect( selectRegionData->displays[ i ].hwnd, NULL, FALSE );
+	if( found ) {
+		// Update dragging rect
+		if( selectRegionData->dragging ) {
+			selectRegionData->bottomRight.x = p.x;
+			selectRegionData->bottomRight.y = p.y;
+			// Invalidate each window to cause redraw of rect
+			for( int i = 0; i < selectRegionData->displayCount; ++i ) {
+				InvalidateRect( selectRegionData->displays[ i ].hwnd, NULL, FALSE );
+			}
 		}
 	}
 
@@ -73,8 +115,6 @@ static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms )
 // Draws a rectangle in the client area, given two points in screenspace coordinates
 // Only creates a draw path, which caller can draw using StrokeAndFillPath
 static void drawRect( HWND hwnd, HDC dc, POINT a, POINT b ) {
-	ScreenToClient( hwnd, &a );
-	ScreenToClient( hwnd, &b );
 	BeginPath( dc );
 	MoveToEx( dc, a.x, a.y, NULL);
 	LineTo( dc, b.x, a.y );
@@ -105,22 +145,9 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
 					break;
 				}
 			}
-
 			// Draw the current dragged rect onto this window - we draw regardless of whether the rect is inside the
 			// window or not - we just let windows handle clipping for us
 			if( selectRegionData->dragging && display ) {
-				// erase previous rect
-				drawRect( hwnd, display->backbuffer, display->prevTopLeft, display->prevBottomRight );
-				SelectObject( display->backbuffer, selectRegionData->eraser );
-				SelectObject( display->backbuffer, selectRegionData->background );
-				StrokeAndFillPath( display->backbuffer );
-			
-				// draw current rect
-				drawRect( hwnd, display->backbuffer, selectRegionData->topLeft, selectRegionData->bottomRight );
-				SelectObject( display->backbuffer, selectRegionData->pen );
-				SelectObject( display->backbuffer, selectRegionData->transparent );
-				StrokeAndFillPath( display->backbuffer );
-
 				POINT cp1 = selectRegionData->topLeft;
 				POINT cp2 = selectRegionData->bottomRight;
 				if( cp1.x > cp2.x ) {
@@ -129,9 +156,9 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
 				if( cp1.y > cp2.y ) {
 					swap( &cp1.y, &cp2.y );
 				}
-				ScreenToClient( hwnd, &cp1 );
-				ScreenToClient( hwnd, &cp2 );
-				RECT curr = { cp1.x, cp1.y, cp2.x, cp2.y };
+				globalToWindow( display, &cp1 );
+				globalToWindow( display, &cp2 );
+
 				POINT pp1 = display->prevTopLeft;
 				POINT pp2 = display->prevBottomRight;
 				if( pp1.x > pp2.x ) {
@@ -140,8 +167,22 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
 				if( pp1.y > pp2.y ) {
 					swap( &pp1.y, &pp2.y );
 				}
-				ScreenToClient( hwnd, &pp1 );
-				ScreenToClient( hwnd, &pp2 );
+				globalToWindow( display, &pp1 );
+				globalToWindow( display, &pp2 );
+
+				// erase previous rect
+				drawRect( hwnd, display->backbuffer, pp1, pp2 );
+				SelectObject( display->backbuffer, selectRegionData->eraser );
+				SelectObject( display->backbuffer, selectRegionData->background );
+				StrokeAndFillPath( display->backbuffer );
+			
+				// draw current rect
+				drawRect( hwnd, display->backbuffer, cp1, cp2 );
+				SelectObject( display->backbuffer, selectRegionData->pen );
+				SelectObject( display->backbuffer, selectRegionData->transparent );
+				StrokeAndFillPath( display->backbuffer );
+
+				RECT curr = { cp1.x, cp1.y, cp2.x, cp2.y };
 				RECT prev = { pp1.x, pp1.y, pp2.x, pp2.y };
 				RECT frame;
 				UnionRect( &frame, &curr, &prev );			
@@ -164,8 +205,17 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
 			}
 		} break;
 		case WM_LBUTTONDOWN: {
+			// Find the Display instance for this window
+			struct Display* display = NULL;
+			int index = 0;
+			for( int i = 0; i < selectRegionData->displayCount; ++i ) {
+				if( selectRegionData->displays[ i ].hwnd == hwnd ) {
+					display = &selectRegionData->displays[ i ];
+					break;
+				}
+			}
 			POINT p = { GET_X_LPARAM( lparam ), GET_Y_LPARAM( lparam ) };
-			ClientToScreen( hwnd, &p );
+			windowToGlobal( display, &p );
 			selectRegionData->topLeft.x = p.x;
 			selectRegionData->topLeft.y = p.y; 
 			selectRegionData->bottomRight.x = p.x;
@@ -181,15 +231,24 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
 // Holds a list of bounding rects for all displays
 struct FindScreensData {
 	int count;
-	RECT bounds[ MAX_DISPLAYS ];
+	MONITORINFOEXA info[ MAX_DISPLAYS ];
+	DEVMODEA mode[ MAX_DISPLAYS ];
 };
 
 
 // Callback used when enumerating displays. Just adds each bounding rect to the list.
 static BOOL CALLBACK findScreens( HMONITOR monitor, HDC dc, LPRECT rect, LPARAM lparam ) {	
 	struct FindScreensData* findScreensData = (struct FindScreensData*) lparam;
-	findScreensData->bounds[ findScreensData->count++ ] = *rect;
-	if( findScreensData->count >= sizeof( findScreensData->bounds ) / sizeof( *findScreensData->bounds ) ) {
+	MONITORINFOEXA info;
+	info.cbSize = sizeof( info );
+	GetMonitorInfoA( monitor, (MONITORINFO*) &info );
+	DEVMODEA mode;
+	EnumDisplaySettingsA( info.szDevice, ENUM_CURRENT_SETTINGS, &mode );
+
+	findScreensData->info[ findScreensData->count ] = info;
+	findScreensData->mode[ findScreensData->count ] = mode;
+	++findScreensData->count;
+	if( findScreensData->count >= sizeof( findScreensData->info ) / sizeof( *findScreensData->info ) ) {
 		return FALSE;
 	}
 	return TRUE;
@@ -239,7 +298,9 @@ static int selectRegion( RECT* region ) {
 	selectRegionData.displayCount = count;
 	for( int i = 0; i < count; ++i ) {
 		struct Display* display = &selectRegionData.displays[ i ];
-		RECT bounds = findScreensData.bounds[ i ];
+		display->info = findScreensData.info[ i ];
+		display->mode = findScreensData.mode[ i ];
+		RECT bounds = findScreensData.info[ i ].rcMonitor;
 		hwnd[ i ] = display->hwnd = CreateWindowExW( WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, wc.lpszClassName, 
 			NULL, WS_VISIBLE, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, 
 			NULL, NULL, GetModuleHandleA( NULL ), 0 );
