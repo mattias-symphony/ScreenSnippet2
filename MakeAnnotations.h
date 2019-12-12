@@ -281,7 +281,7 @@ int makeAnnotations( HBITMAP snippet, RECT bounds, int lang ) {
 	};
     RegisterClassW( &wc );
 
-	HWND hwnd = CreateWindowW( wc.lpszClassName, 
+	HWND hwnd = CreateWindowExW( WS_EX_TOPMOST, wc.lpszClassName, 
 		localization[ lang ].title, WS_VISIBLE | WS_OVERLAPPEDWINDOW, 
 		CW_USEDEFAULT, CW_USEDEFAULT, max( 600, bounds.right - bounds.left ) + 50 , bounds.bottom - bounds.top + 150,
 		NULL, NULL, GetModuleHandleW( NULL ), 0 );

@@ -74,7 +74,6 @@ static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {
 
 	if( wcscmp( className, WINDOW_CLASS_NAME ) == 0 ) {
 		PostMessageA( hwnd, WM_CLOSE, 0, 0 );
-		*(BOOL*)lparam = TRUE;
 	}
 
 	return TRUE;
@@ -83,9 +82,12 @@ static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {
 
 int main( int argc, char* argv[] ) {
 	SetProcessDPIAware(); // Avoid DPI scaling affecting the resolution of the grabbed snippet
-	BOOL windowsClosed = FALSE;
-	EnumWindows( closeExistingInstance, (LPARAM) &windowsClosed );
-	if( windowsClosed ) {
+
+	// Cancel screen snippet in progress
+	EnumWindows( closeExistingInstance, 0 );
+
+	// If no command line parameters, this was a request to cancel in-progress snippet tool
+	if( argc < 2 ) {
 		return EXIT_SUCCESS;
 	}
 
