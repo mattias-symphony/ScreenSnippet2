@@ -36,6 +36,7 @@ static HBITMAP grabSnippet( POINT topLeft, POINT bottomRight ) {
 	return snippet;
 }
 
+
 // Utility function used to get an encoder for PNG image format
 static int GetEncoderClsid( const WCHAR* format, CLSID* pClsid ) {
 	UINT num = 0; // number of image encoders
@@ -68,6 +69,7 @@ static int GetEncoderClsid( const WCHAR* format, CLSID* pClsid ) {
 }
 
 
+// Callback for closing existing instances of the snippet tool
 static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {	
 	wchar_t className[ 256 ] = L"";
 	GetClassNameW( hwnd, className, sizeof( className ) );
@@ -133,16 +135,11 @@ int main( int argc, char* argv[] ) {
 			Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
 			CLSID pngClsid;
 			if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
-				wchar_t* filename = 0;
-				if( argc > 1 ) {
-					size_t len = strlen( argv[ 1 ] );
-					filename = new wchar_t[ len + 1 ];
-					mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
-				}
+				size_t len = strlen( argv[ 1 ] );
+				wchar_t* filename = filename = new wchar_t[ len + 1 ];
+				mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
 				bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
-				if( filename ) {
-					delete[] filename;
-				}
+				delete[] filename;
 			}
         }
 
