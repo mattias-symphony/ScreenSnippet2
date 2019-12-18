@@ -309,7 +309,7 @@ HBITMAP WINAPI penIcon( Gdiplus::Pen* pen ) {
 }
 
 
-int makeAnnotations( HBITMAP snippet, RECT bounds, int lang ) {
+int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, int lang ) {
     // Register window class
     WNDCLASSW wc = { 
         CS_OWNDC | CS_HREDRAW | CS_VREDRAW,     // style
@@ -324,11 +324,22 @@ int makeAnnotations( HBITMAP snippet, RECT bounds, int lang ) {
         WINDOW_CLASS_NAME                       // lpszClassName
     };
     RegisterClassW( &wc );
+	
 
+	// Calculate window size from snippet bounds. Add some extra space and a min size to fit buttons
+	int width = max(600, bounds.right - bounds.left) + 50;
+	int height = bounds.bottom - bounds.top + 150;
+
+	// Determine position on requested monitor
+	MONITORINFO info;
+	info.cbSize = sizeof( info );
+	GetMonitorInfo( monitor, &info );
+	int x = info.rcWork.left + max( 0, ( ( info.rcWork.right - info.rcWork.left ) - width ) / 2 );
+	int y = info.rcWork.top + max( 0, ( ( info.rcWork.bottom - info.rcWork.top ) - height ) / 2 );
+	
     // Create window
     HWND hwnd = CreateWindowExW( WS_EX_TOPMOST, wc.lpszClassName, 
-        localization[ lang ].title, WS_VISIBLE | WS_OVERLAPPEDWINDOW,  CW_USEDEFAULT, CW_USEDEFAULT, 
-        max( 600, bounds.right - bounds.left ) + 50 , bounds.bottom - bounds.top + 150, // Add some extra space and a min size
+        localization[ lang ].title, WS_VISIBLE | WS_OVERLAPPEDWINDOW, x, y, width, height,
         NULL, NULL, GetModuleHandleW( NULL ), 0 );
 
     // GDI+ instances of all available pens

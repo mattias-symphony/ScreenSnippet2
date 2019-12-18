@@ -85,11 +85,18 @@ static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {
 int main( int argc, char* argv[] ) {
     SetProcessDPIAware(); // Avoid DPI scaling affecting the resolution of the grabbed snippet
 
+    HWND foregroundWindow = GetForegroundWindow();
+
+    HMONITOR monitor = MonitorFromWindow( foregroundWindow, MONITOR_DEFAULTTOPRIMARY );
+
     // Cancel screen snippet in progress
     EnumWindows( closeExistingInstance, 0 );
 
     // If no command line parameters, this was a request to cancel in-progress snippet tool
     if( argc < 2 ) {
+        if( foregroundWindow ) {
+            SetForegroundWindow( foregroundWindow );
+        }
         return EXIT_SUCCESS;
     }
 
@@ -129,7 +136,7 @@ int main( int argc, char* argv[] ) {
 
         // Let the user annotate the screen snippet with drawings
         RECT bounds = { 0, 0, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y };
-        int result = makeAnnotations( snippet, bounds, lang );
+        int result = makeAnnotations( monitor, snippet, bounds, lang );
         if( result == EXIT_SUCCESS ) {
             // Save annotated bitmap
             Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
@@ -147,6 +154,9 @@ int main( int argc, char* argv[] ) {
     }
 
     Gdiplus::GdiplusShutdown( gdiplusToken );
+    if( foregroundWindow ) {
+        SetForegroundWindow( foregroundWindow );
+    }
     return EXIT_SUCCESS;
 }
 
