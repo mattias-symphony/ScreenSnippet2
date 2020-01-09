@@ -11,6 +11,8 @@ struct Stroke {
 
 // State for the annotations window, this is set up and attached to the window in the `makeAnnotations` function
 struct MakeAnnotationsData {
+    float snippetScale; // Scale of the display the snippet was captured on
+    float scale; // Current scale the snippet is displayed at
     RECT bounds; // Bounds of the screen snippet
     Gdiplus::Pen** pens; // Array of pens selectable via the pen menu...
     Gdiplus::Pen** highlighters; // ...and corresponding array for highlighters
@@ -32,6 +34,12 @@ struct MakeAnnotationsData {
     HMENU penMenu; // Handles to the dropdown menus to select pens and highlighters
     HMENU highlightMenu;
     BOOL completed; // Will be set to true when/if user press `Done` button
+    HCURSOR arrowCursor;
+    HCURSOR penCursor;
+    HCURSOR eraserCursor;
+    int buttonHeight; // Last calculated scaled height of the buttons
+
+
 };
 
 
@@ -80,10 +88,105 @@ void addStrokePoint( struct MakeAnnotationsData* data, POINT* p, BOOL force ) {
 }
 
 
+float getDisplayScaling( HWND hwnd ) {
+    HMONITOR monitor = MonitorFromWindow( hwnd, MONITOR_DEFAULTTONEAREST );
+    if( !monitor ) {
+        return 0.0f;
+    }
+
+    UINT dpiX;
+    UINT dpiY;
+    GetDpiForMonitor( monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY );
+    if( dpiX != dpiY ) {
+        return 0.0f;
+    }
+
+	float const windowsUnscaledDpi = 96.0f;
+    return dpiX / windowsUnscaledDpi;
+}
+
+
+void resizeWindow( HWND hwnd, float prevScale, float newScale ) {
+    RECT rect;
+    GetWindowRect( hwnd, &rect );
+    int w = rect.right - rect.left;
+    int h = rect.bottom - rect.top;
+    w = (int)( w / prevScale );
+    h = (int)( h / prevScale );
+    w = (int)( w * newScale );
+    h = (int)( h * newScale );
+    SetWindowPos( hwnd, 0, 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOREPOSITION );
+}
+
+
+int resizeButton( HWND button, float prevScale, float newScale ) {
+    RECT rect;
+    GetWindowRect( button, &rect );
+    MapWindowPoints( HWND_DESKTOP, GetParent( button ), (LPPOINT) &rect, 2 );
+    int x = rect.left;
+    int y = rect.top;
+    int w = rect.right - rect.left;
+    int h = rect.bottom - rect.top;
+    x = (int)( x / prevScale );
+    y = (int)( y / prevScale );
+    w = (int)( w / prevScale );
+    h = (int)( h / prevScale );
+    x = (int)( x * newScale );
+    y = (int)( y * newScale );
+    w = (int)( w * newScale );
+    h = (int)( h * newScale );  
+    SetWindowPos( button, 0, x, y, w, h, SWP_NOZORDER | SWP_NOREPOSITION );
+
+    NONCLIENTMETRICSA metrics = {};
+    metrics.cbSize = sizeof( metrics );
+    SystemParametersInfoA( SPI_GETNONCLIENTMETRICS, metrics.cbSize, &metrics, 0 );
+    metrics.lfCaptionFont.lfHeight = (LONG)( h * 0.8f );
+    HFONT font = CreateFontIndirectA( &metrics.lfCaptionFont );
+    SendMessage( button, WM_SETFONT, (LPARAM) font, TRUE );
+    return h;
+}
+
+
 static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     struct MakeAnnotationsData* data = (struct MakeAnnotationsData*) GetWindowLongPtrA( hwnd, GWLP_USERDATA );
-    int const spaceForButtons = 50; // Reserve some pixels at the top for the buttons
+    int const spaceForButtons = data ? (int)( data->buttonHeight * 1.7f ) : 50; // Reserve some pixels at the top for the buttons
+
     switch( message ) {
+        case WM_NCCREATE: {
+            EnableNonClientDpiScaling( hwnd ); // Makes titlebar and buttons auto-scale with DPI
+        } break;
+
+
+        case WM_MOVE: {
+            if( data ) {
+                // Detect if scaling have changed (if window was moved to a different display)
+                float scale = getDisplayScaling( hwnd );
+                if( scale == 0.0f || data->snippetScale == 0.0f || scale <= data->snippetScale ) {
+                    scale = 1.0f;
+                } else {
+                    scale = 1.0f + ( scale - data->snippetScale );
+                }
+
+                // Rescale window if necessary
+                if( data->scale != scale ) {
+                    resizeWindow( hwnd, data->scale, scale );
+                    resizeButton( data->penButton, data->scale, scale );
+                    resizeButton( data->highlightButton, data->scale, scale );
+                    resizeButton( data->eraseButton, data->scale, scale );
+                    data->buttonHeight = resizeButton( data->doneButton, data->scale, scale );
+
+                    data->scale = scale;
+
+                    // Clear background
+                    HDC dc = GetDC( hwnd );
+                    RECT r;
+                    GetClientRect( hwnd, &r  );
+                    FillRect( dc, &r, GetStockBrush( LTGRAY_BRUSH ) );
+                    ReleaseDC( hwnd, dc );
+                }
+            }
+        } break;
+
         case WM_COMMAND: {
             // Handle button clicks
             if( HIWORD( wparam ) == BN_CLICKED ) {
@@ -108,7 +211,6 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                     // Switch to `pen` mode whether the user selected a menu item or not (use last selected pen index)
                     data->highlighter = FALSE;
                     data->eraser = FALSE;
-                    SetCursor( LoadCursor( NULL, IDC_CROSS ) );
                 }
                 // Show the highlighter selection submenu and let the user select an item
                 if( (HWND) lparam == data->highlightButton ) {
@@ -122,27 +224,31 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                     // Switch to `highlighter` mode whether the user selected a menu item or not (use last index)
                     data->highlighter = TRUE;
                     data->eraser = FALSE;
-                    SetCursor( LoadCursor( NULL, IDC_CROSS ) );
                 }
                 // Enter `erase` mode
                 if( (HWND) lparam == data->eraseButton ) {
                     data->penDown = FALSE;
                     data->eraser = TRUE;
-                    SetCursor( LoadCursor( NULL, IDC_NO ) );
                 }
             }
         } break;
 
         // As windows will change the cursor for various reasons, we must restore it to the one we want when required
         case WM_SETCURSOR: {
-            if( data->eraser ) {
-                SetCursor( LoadCursor( NULL, IDC_NO ) );
-            } else {
-                SetCursor( LoadCursor( NULL, IDC_CROSS ) );
+            POINT pos;
+            GetCursorPos( &pos );
+            if( ScreenToClient( hwnd, &pos ) ) {
+                if( pos.y < spaceForButtons ) {
+                    SetCursor( data->arrowCursor );
+                } else if( data->eraser ) {
+                    SetCursor( data->eraserCursor );
+                } else {
+                    SetCursor( data->penCursor );
+                }
             }
         } break;
             
-        // Exit the annotation mode if the window is closes
+        // Exit the annotation mode if the window is closed
         case WM_CLOSE: {
             PostQuitMessage( 0 );
         } break;
@@ -152,12 +258,18 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
             // Only disable the erase after the window have been created and had its user data set, so we get the
             // initial clearing of the background
             if( data ) {
+                HDC dc = GetDC( hwnd );
+                RECT r;
+                GetClientRect( hwnd, &r  );
+                r.bottom = r.top + spaceForButtons; 
+                FillRect( dc, &r, GetStockBrush( LTGRAY_BRUSH ) );
+                ReleaseDC( hwnd, dc );
                 return 1;
             }
         } break;
 
         // When the window is resized, we need to manually clear any areas that have been made visible, as we have
-        // disanbled WM_ERASEBKGND
+        // disabled WM_ERASEBKGND
         case WM_SIZE: {
             HDC dc = GetDC( hwnd );
             RECT r;
@@ -173,6 +285,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
             // Draw the snippet as a background - the lines will be drawn on top. 
             RECT bounds = data->bounds;
             HDC backbuffer = data->backbuffer;
+
             BitBlt( backbuffer, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, 
                 data->snippet, 0, 0, SRCCOPY );
 
@@ -205,15 +318,26 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                     GetCursorPos( &mouse );
                     ScreenToClient( hwnd, &mouse );
                     Gdiplus::Point p = stroke->points[ stroke->count - 1 ];
-                    graphics.DrawLine( pen, p.X, p.Y, mouse.x, mouse.y - spaceForButtons );
+                    graphics.DrawLine( pen, p.X, p.Y, (INT)( mouse.x / data->scale ), (INT)( ( mouse.y - spaceForButtons ) / data->scale ) );
                 }
             }
 
             // Copy the backbuffer to the window so it can be seen
             PAINTSTRUCT ps; 
             HDC dc = BeginPaint( hwnd, &ps );
-            BitBlt( dc, bounds.left, bounds.top + spaceForButtons, bounds.right - bounds.left, 
-                bounds.bottom - bounds.top,  backbuffer, 0, 0, SRCCOPY );
+
+            if( data->scale == 1.0f ) {
+                BitBlt( dc, 0, spaceForButtons, bounds.right - bounds.left, bounds.bottom - bounds.top, 
+                    backbuffer, 0, 0, SRCCOPY );
+            } else {
+                int w = (int)( ( bounds.right - bounds.left ) * data->scale );
+                int h = (int)( ( bounds.bottom - bounds.top ) * data->scale );
+                SetStretchBltMode( backbuffer, COLORONCOLOR );
+                StretchBlt( dc, 0, spaceForButtons, w, h, 
+                    backbuffer, 0, 0, bounds.right - bounds.left, bounds.bottom - bounds.top, SRCCOPY );
+            }
+
+            
             EndPaint( hwnd, &ps );
         } break;
 
@@ -223,7 +347,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                 data->penDown = TRUE;
                 newStroke( data, data->highlighter, 
                     data->highlighter ? data->highlightIndex : data->penIndex );
-                POINT p = { GET_X_LPARAM( lparam ), GET_Y_LPARAM( lparam ) - spaceForButtons };
+                POINT p = { (int)( GET_X_LPARAM( lparam ) / data->scale ), (int)( ( GET_Y_LPARAM( lparam ) - spaceForButtons ) / data->scale ) };
                 addStrokePoint( data, &p, TRUE );
                 InvalidateRect( hwnd, NULL, FALSE );
                 break; // If we are in 'eraser' mode, fall through into the "RBUTTONDOWN" eraser code below
@@ -232,7 +356,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
 
         case WM_RBUTTONDOWN: {
             // Remove strokes when the user press the right button or if `erase` mode is enabled and pressing left button
-            Gdiplus::Point p = { GET_X_LPARAM( lparam ), GET_Y_LPARAM( lparam ) - spaceForButtons };
+            Gdiplus::Point p = { (int)( GET_X_LPARAM( lparam ) / data->scale ), (int)( ( GET_Y_LPARAM( lparam ) - spaceForButtons ) / data->scale ) };
             HDC backbuffer = data->backbuffer;
             Gdiplus::Graphics graphics( backbuffer );
             graphics.SetSmoothingMode( Gdiplus::SmoothingModeHighQuality );
@@ -259,7 +383,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
         case WM_LBUTTONUP: {
             if( data->penDown ) {
                 data->penDown = FALSE;
-                POINT p = { GET_X_LPARAM( lparam ), GET_Y_LPARAM( lparam ) - spaceForButtons };
+                POINT p = { (int)( GET_X_LPARAM( lparam ) / data->scale ), (int)( ( GET_Y_LPARAM( lparam ) - spaceForButtons ) / data->scale ) };
                 addStrokePoint( data, &p, TRUE );
                 InvalidateRect( hwnd, NULL, FALSE );
             }
@@ -268,7 +392,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
         // When the mouse moves and the left button is being held, add a point to the current stroke
         case WM_MOUSEMOVE: {
             if( data->penDown ) {
-                POINT p = { GET_X_LPARAM( lparam ), GET_Y_LPARAM( lparam ) - spaceForButtons };
+                POINT p = { (int)( GET_X_LPARAM( lparam ) / data->scale ), (int)( ( GET_Y_LPARAM( lparam ) - spaceForButtons ) / data->scale ) };
                 addStrokePoint( data, &p, FALSE );
                 InvalidateRect( hwnd, NULL, FALSE );
             }
@@ -309,7 +433,10 @@ HBITMAP WINAPI penIcon( Gdiplus::Pen* pen ) {
 }
 
 
-int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, int lang ) {
+int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snippetScale, int lang ) {
+
+    HICON icon = LoadIcon( GetModuleHandleA( NULL ), MAKEINTRESOURCE( IDR_ICON ) );
+    
     // Register window class
     WNDCLASSW wc = { 
         CS_OWNDC | CS_HREDRAW | CS_VREDRAW,     // style
@@ -317,29 +444,29 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, int lang ) 
         0,                                      // cbClsExtra
         0,                                      // cbWndExtra
         GetModuleHandleA( NULL ),               // hInstance
-        NULL,                                   // hIcon;
+        icon,                                   // hIcon
         NULL,                                   // hCursor
         (HBRUSH) GetStockBrush( LTGRAY_BRUSH ), // hbrBackground
         NULL,                                   // lpszMenuName
         WINDOW_CLASS_NAME                       // lpszClassName
     };
     RegisterClassW( &wc );
-	
+    
 
-	// Calculate window size from snippet bounds. Add some extra space and a min size to fit buttons
-	int width = max(600, bounds.right - bounds.left) + 50;
-	int height = bounds.bottom - bounds.top + 150;
+    // Calculate window size from snippet bounds. Add some extra space and a min size to fit buttons
+    int width = max(600, bounds.right - bounds.left) + 50;
+    int height = bounds.bottom - bounds.top + 150;
 
-	// Determine position on requested monitor
-	MONITORINFO info;
-	info.cbSize = sizeof( info );
-	GetMonitorInfo( monitor, &info );
-	int x = info.rcWork.left + max( 0, ( ( info.rcWork.right - info.rcWork.left ) - width ) / 2 );
-	int y = info.rcWork.top + max( 0, ( ( info.rcWork.bottom - info.rcWork.top ) - height ) / 2 );
-	
+    // Determine position on requested monitor
+    MONITORINFO info;
+    info.cbSize = sizeof( info );
+    GetMonitorInfo( monitor, &info );
+    int x = info.rcWork.left + max( 0, ( ( info.rcWork.right - info.rcWork.left ) - width ) / 2 );
+    int y = info.rcWork.top + max( 0, ( ( info.rcWork.bottom - info.rcWork.top ) - height ) / 2 );
+    
     // Create window
     HWND hwnd = CreateWindowExW( WS_EX_TOPMOST, wc.lpszClassName, 
-        localization[ lang ].title, WS_VISIBLE | WS_OVERLAPPEDWINDOW, x, y, width, height,
+        localization[ lang ].title, WS_OVERLAPPEDWINDOW, x, y, width, height,
         NULL, NULL, GetModuleHandleW( NULL ), 0 );
 
     // GDI+ instances of all available pens
@@ -364,12 +491,18 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, int lang ) 
 
     // Runtime state for annotations window
     struct MakeAnnotationsData makeAnnotationsData = {      
+        snippetScale,
+        1.0f,
         bounds,
         pens,
         highlights,
         penEraser,
         highlightEraser,
     };
+
+    makeAnnotationsData.arrowCursor = LoadCursor( NULL, IDC_ARROW );
+    makeAnnotationsData.penCursor = (HCURSOR) LoadCursorA( GetModuleHandleA( NULL ), MAKEINTRESOURCEA( IDR_PEN ) );
+    makeAnnotationsData.eraserCursor = (HCURSOR) LoadCursorA( GetModuleHandleA( NULL ), MAKEINTRESOURCEA( IDR_ERASER ) );
 
     // Create the `pen` menu and add all items to it
     HMENU penMenu = CreatePopupMenu();
@@ -398,22 +531,28 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, int lang ) 
     // Create buttons
     makeAnnotationsData.penButton = CreateWindowW( L"BUTTON", localization[ lang ].pen,
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
-        7, 10, 113, 30, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+        5, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
     
     makeAnnotationsData.highlightButton = CreateWindowW( L"BUTTON", localization[ lang ].highlight,
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
-        126, 10, 113, 30, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+        5 + 80 * 1, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
     
     makeAnnotationsData.eraseButton = CreateWindowW( L"BUTTON", localization[ lang ].erase,
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
-        244, 10, 113, 30, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+        5 + 80 * 2, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
     
     makeAnnotationsData.doneButton = CreateWindowW( L"BUTTON", localization[ lang ].done,
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
-        375, 10, 113, 30, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+        5 + 10 + 80 * 3, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+
+    resizeButton( makeAnnotationsData.penButton, 1.0f, getDisplayScaling( hwnd ) );
+    resizeButton( makeAnnotationsData.highlightButton, 1.0f, getDisplayScaling( hwnd ) );
+    resizeButton( makeAnnotationsData.eraseButton, 1.0f, getDisplayScaling( hwnd ) );
+    makeAnnotationsData.buttonHeight = resizeButton( makeAnnotationsData.doneButton, 1.0f, getDisplayScaling( hwnd ) );
 
     // Attach state data to window instance
     SetWindowLongPtrA( hwnd, GWLP_USERDATA, (LONG_PTR)&makeAnnotationsData );
+    ShowWindow( hwnd, SW_SHOW );
     UpdateWindow( hwnd );
 
     // Create off-screen drawing surface for window

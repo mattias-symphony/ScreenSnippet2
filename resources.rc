@@ -1,0 +1,4 @@
+#include "resources.h"
+IDR_ICON              ICON                      "icon.ico"
+IDR_PEN               CURSOR                    "pen.cur"
+IDR_ERASER            CURSOR                    "eraser.cur"

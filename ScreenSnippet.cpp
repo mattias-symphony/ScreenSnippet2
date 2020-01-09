@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <gdiplus.h>
+#include <shellscalingapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
@@ -12,12 +13,52 @@
 #pragma comment( lib, "user32.lib" )
 #pragma comment( lib, "gdi32.lib" )
 #pragma comment( lib, "gdiplus.lib" )
+#pragma comment( lib, "shcore.lib" )
 
 #define WINDOW_CLASS_NAME L"SymphonyScreenSnippetTool"
 
+#include "resources.h"
 #include "SelectRegion.h"
 #include "Localization.h"
 #include "MakeAnnotations.h"
+
+struct SnippetScalingData {
+    POINT topLeft;
+    POINT bottomRight;
+    HMONITOR monitor;
+};
+
+
+BOOL CALLBACK monproc( HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM lparam ) {
+    SnippetScalingData* data = (SnippetScalingData*) lparam;
+
+    if( PtInRect( rect, data->topLeft ) && PtInRect( rect, data->bottomRight ) ) {
+        data->monitor = monitor;
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+
+float getSnippetScaling( POINT topLeft, POINT bottomRight ) {
+    SnippetScalingData data = { topLeft, bottomRight, NULL };
+
+    EnumDisplayMonitors( NULL, NULL, monproc, (LPARAM)&data );
+    if( !data.monitor ) {
+        return 0.0f;
+    }
+
+    UINT dpiX;
+    UINT dpiY;
+    GetDpiForMonitor( data.monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY );
+    if( dpiX != dpiY ) {
+        return 0.0f;
+    }
+
+	float const windowsUnscaledDpi = 96.0f;
+    return dpiX / windowsUnscaledDpi;
+}
 
 
 // Grab a section of the screen
@@ -35,6 +76,7 @@ static HBITMAP grabSnippet( POINT topLeft, POINT bottomRight ) {
 
     return snippet;
 }
+
 
 
 // Utility function used to get an encoder for PNG image format
@@ -81,10 +123,12 @@ static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {
     return TRUE;
 }
 
-
 int main( int argc, char* argv[] ) {
-    SetProcessDPIAware(); // Avoid DPI scaling affecting the resolution of the grabbed snippet
-
+     // Avoid DPI scaling affecting the resolution of the grabbed snippet
+    if( !SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE ) ) {
+        SetProcessDPIAware();
+    }
+    
     HWND foregroundWindow = GetForegroundWindow();
 
     HMONITOR monitor = MonitorFromWindow( foregroundWindow, MONITOR_DEFAULTTOPRIMARY );
@@ -133,10 +177,11 @@ int main( int argc, char* argv[] ) {
         
         // Grab a bitmap of the selected region
         HBITMAP snippet = grabSnippet( topLeft, bottomRight );
+        float snippetScale = getSnippetScaling( topLeft, bottomRight );
 
         // Let the user annotate the screen snippet with drawings
         RECT bounds = { 0, 0, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y };
-        int result = makeAnnotations( monitor, snippet, bounds, lang );
+        int result = makeAnnotations( monitor, snippet, bounds, snippetScale, lang );
         if( result == EXIT_SUCCESS ) {
             // Save annotated bitmap
             Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
