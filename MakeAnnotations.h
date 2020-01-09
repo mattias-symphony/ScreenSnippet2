@@ -101,7 +101,8 @@ float getDisplayScaling( HWND hwnd ) {
         return 0.0f;
     }
 
-    return dpiX / 96.0f;
+	float const windowsUnscaledDpi = 96.0f;
+    return dpiX / windowsUnscaledDpi;
 }
 
 
