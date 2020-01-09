@@ -105,9 +105,14 @@ static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms )
 
     // Check if user have let go of mouse button
     if( selectRegionData->dragging && ( GetAsyncKeyState( VK_LBUTTON ) & 0x8000 ) == 0 ) {
-        // Complete region selection
+        if( ( selectRegionData->bottomRight.x - selectRegionData->topLeft.x ) == 0 ||
+            ( selectRegionData->bottomRight.y - selectRegionData->topLeft.y ) == 0 ) {
         selectRegionData->dragging = FALSE;
-        selectRegionData->done = TRUE;
+        } else {
+            // Complete region selection
+            selectRegionData->dragging = FALSE;
+            selectRegionData->done = TRUE;
+        }
     }
 
     // Set this function to be called again in 16ms ( we update at ~60hz)
