@@ -1,11 +1,11 @@
 {
   "name": "screen-snippet",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "screen snippet util for windows, new version",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "preinstall": "npm run build",
-    "build": "rc /nologo resources.rc & cl ScreenSnippet.cpp resources.res /O2 /MT /nologo /link /SUBSYSTEM:WINDOWS"
+    "build": "rc.exe /nologo resources.rc & cl ScreenSnippet.cpp resources.res /O2 /MT /nologo /link /SUBSYSTEM:WINDOWS"
   },
   "repository": {
     "type": "git",
