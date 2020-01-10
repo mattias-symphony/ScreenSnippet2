@@ -38,8 +38,6 @@ struct MakeAnnotationsData {
     HCURSOR penCursor;
     HCURSOR eraserCursor;
     int buttonHeight; // Last calculated scaled height of the buttons
-
-
 };
 
 
@@ -90,18 +88,18 @@ void addStrokePoint( struct MakeAnnotationsData* data, POINT* p, BOOL force ) {
 
 float getDisplayScaling( HWND hwnd ) {
     HMONITOR monitor = MonitorFromWindow( hwnd, MONITOR_DEFAULTTONEAREST );
-    if( !monitor ) {
+    if( !monitor || !GetDpiForMonitorPtr ) {
         return 0.0f;
     }
 
     UINT dpiX;
     UINT dpiY;
-    GetDpiForMonitor( monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY );
+    GetDpiForMonitorPtr( monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY );
     if( dpiX != dpiY ) {
         return 0.0f;
     }
 
-	float const windowsUnscaledDpi = 96.0f;
+    float const windowsUnscaledDpi = 96.0f;
     return dpiX / windowsUnscaledDpi;
 }
 
@@ -153,7 +151,9 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
 
     switch( message ) {
         case WM_NCCREATE: {
-            EnableNonClientDpiScaling( hwnd ); // Makes titlebar and buttons auto-scale with DPI
+            if( EnableNonClientDpiScalingPtr ) {
+                EnableNonClientDpiScalingPtr( hwnd ); // Makes titlebar and buttons auto-scale with DPI
+            }
         } break;
 
 
@@ -434,7 +434,6 @@ HBITMAP WINAPI penIcon( Gdiplus::Pen* pen ) {
 
 
 int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snippetScale, int lang ) {
-
     HICON icon = LoadIcon( GetModuleHandleA( NULL ), MAKEINTRESOURCE( IDR_ICON ) );
     
     // Register window class
@@ -545,10 +544,14 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snipp
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
         5 + 10 + 80 * 3, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
 
-    resizeButton( makeAnnotationsData.penButton, 1.0f, getDisplayScaling( hwnd ) );
-    resizeButton( makeAnnotationsData.highlightButton, 1.0f, getDisplayScaling( hwnd ) );
-    resizeButton( makeAnnotationsData.eraseButton, 1.0f, getDisplayScaling( hwnd ) );
-    makeAnnotationsData.buttonHeight = resizeButton( makeAnnotationsData.doneButton, 1.0f, getDisplayScaling( hwnd ) );
+    float scale = getDisplayScaling( hwnd );
+    if( scale == 0.0f ) {
+        scale = 1.0f;
+    }
+    resizeButton( makeAnnotationsData.penButton, 1.0f, scale );
+    resizeButton( makeAnnotationsData.highlightButton, 1.0f, scale );
+    resizeButton( makeAnnotationsData.eraseButton, 1.0f, scale );
+    makeAnnotationsData.buttonHeight = resizeButton( makeAnnotationsData.doneButton, 1.0f, scale );
 
     // Attach state data to window instance
     SetWindowLongPtrA( hwnd, GWLP_USERDATA, (LONG_PTR)&makeAnnotationsData );

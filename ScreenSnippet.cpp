@@ -13,9 +13,11 @@
 #pragma comment( lib, "user32.lib" )
 #pragma comment( lib, "gdi32.lib" )
 #pragma comment( lib, "gdiplus.lib" )
-#pragma comment( lib, "shcore.lib" )
 
 #define WINDOW_CLASS_NAME L"SymphonyScreenSnippetTool"
+
+BOOL (WINAPI *EnableNonClientDpiScalingPtr)( HWND ) = NULL; // Dynamic bound function which does not exist on win7
+HRESULT (STDAPICALLTYPE* GetDpiForMonitorPtr)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT* );
 
 #include "resources.h"
 #include "SelectRegion.h"
@@ -45,18 +47,18 @@ float getSnippetScaling( POINT topLeft, POINT bottomRight ) {
     SnippetScalingData data = { topLeft, bottomRight, NULL };
 
     EnumDisplayMonitors( NULL, NULL, monproc, (LPARAM)&data );
-    if( !data.monitor ) {
+    if( !data.monitor || !GetDpiForMonitorPtr ) {
         return 0.0f;
     }
 
     UINT dpiX;
     UINT dpiY;
-    GetDpiForMonitor( data.monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY );
+    GetDpiForMonitorPtr( data.monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY );
     if( dpiX != dpiY ) {
         return 0.0f;
     }
 
-	float const windowsUnscaledDpi = 96.0f;
+    float const windowsUnscaledDpi = 96.0f;
     return dpiX / windowsUnscaledDpi;
 }
 
@@ -124,10 +126,37 @@ static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {
 }
 
 int main( int argc, char* argv[] ) {
-     // Avoid DPI scaling affecting the resolution of the grabbed snippet
-    if( !SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE ) ) {
-        SetProcessDPIAware();
+
+    // Dynamic binding of functions not available on win 7
+    HMODULE lib = LoadLibraryA( "user32.dll" );
+    if( lib ) {
+        EnableNonClientDpiScalingPtr = (BOOL (WINAPI*)(HWND)) GetProcAddress( lib, "EnableNonClientDpiScaling" );
+
+        DPI_AWARENESS_CONTEXT (WINAPI *SetThreadDpiAwarenessContextPtr)( DPI_AWARENESS_CONTEXT ) = 
+            (DPI_AWARENESS_CONTEXT (WINAPI*)(DPI_AWARENESS_CONTEXT)) 
+                GetProcAddress( lib, "SetThreadDpiAwarenessContext" );
+        
+        BOOL (WINAPI *SetProcessDPIAwarePtr)(VOID) = (BOOL (WINAPI*)(VOID))GetProcAddress( lib, "SetProcessDPIAware" );
+
+        // Avoid DPI scaling affecting the resolution of the grabbed snippet
+        if( !SetThreadDpiAwarenessContextPtr || !SetThreadDpiAwarenessContextPtr( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE ) ) {
+            if( SetProcessDPIAwarePtr ) {
+                SetProcessDPIAwarePtr();
+            }
+        }
+
+        FreeLibrary( lib );
+
+        lib = LoadLibraryA( "Shcore.dll" );
+        if( lib ) {
+            GetDpiForMonitorPtr = 
+                (HRESULT (STDAPICALLTYPE*)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT* )) 
+                    GetProcAddress( lib, "GetDpiForMonitor" );
+
+            FreeLibrary( lib );
+        }
     }
+
     
     HWND foregroundWindow = GetForegroundWindow();
 
