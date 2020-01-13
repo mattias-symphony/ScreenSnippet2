@@ -17,7 +17,7 @@
 #define WINDOW_CLASS_NAME L"SymphonyScreenSnippetTool"
 
 BOOL (WINAPI *EnableNonClientDpiScalingPtr)( HWND ) = NULL; // Dynamic bound function which does not exist on win7
-HRESULT (STDAPICALLTYPE* GetDpiForMonitorPtr)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT* );
+HRESULT (STDAPICALLTYPE* GetDpiForMonitorPtr)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT* ) = NULL;
 
 #include "resources.h"
 #include "SelectRegion.h"
@@ -128,15 +128,15 @@ static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {
 int main( int argc, char* argv[] ) {
 
     // Dynamic binding of functions not available on win 7
-    HMODULE lib = LoadLibraryA( "user32.dll" );
-    if( lib ) {
-        EnableNonClientDpiScalingPtr = (BOOL (WINAPI*)(HWND)) GetProcAddress( lib, "EnableNonClientDpiScaling" );
+    HMODULE user32lib = LoadLibraryA( "user32.dll" );
+    if( user32lib ) {
+        EnableNonClientDpiScalingPtr = (BOOL (WINAPI*)(HWND)) GetProcAddress( user32lib, "EnableNonClientDpiScaling" );
 
         DPI_AWARENESS_CONTEXT (WINAPI *SetThreadDpiAwarenessContextPtr)( DPI_AWARENESS_CONTEXT ) = 
             (DPI_AWARENESS_CONTEXT (WINAPI*)(DPI_AWARENESS_CONTEXT)) 
-                GetProcAddress( lib, "SetThreadDpiAwarenessContext" );
+                GetProcAddress( user32lib, "SetThreadDpiAwarenessContext" );
         
-        BOOL (WINAPI *SetProcessDPIAwarePtr)(VOID) = (BOOL (WINAPI*)(VOID))GetProcAddress( lib, "SetProcessDPIAware" );
+        BOOL (WINAPI *SetProcessDPIAwarePtr)(VOID) = (BOOL (WINAPI*)(VOID))GetProcAddress( user32lib, "SetProcessDPIAware" );
 
         // Avoid DPI scaling affecting the resolution of the grabbed snippet
         if( !SetThreadDpiAwarenessContextPtr || !SetThreadDpiAwarenessContextPtr( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE ) ) {
@@ -144,17 +144,13 @@ int main( int argc, char* argv[] ) {
                 SetProcessDPIAwarePtr();
             }
         }
+    }
 
-        FreeLibrary( lib );
-
-        lib = LoadLibraryA( "Shcore.dll" );
-        if( lib ) {
-            GetDpiForMonitorPtr = 
-                (HRESULT (STDAPICALLTYPE*)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT* )) 
-                    GetProcAddress( lib, "GetDpiForMonitor" );
-
-            FreeLibrary( lib );
-        }
+    HMODULE shcorelib = LoadLibraryA( "Shcore.dll" );
+    if( shcorelib ) {
+        GetDpiForMonitorPtr = 
+            (HRESULT (STDAPICALLTYPE*)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT* )) 
+                GetProcAddress( shcorelib, "GetDpiForMonitor" );
     }
 
     
@@ -231,6 +227,15 @@ int main( int argc, char* argv[] ) {
     if( foregroundWindow ) {
         SetForegroundWindow( foregroundWindow );
     }
+
+    if( user32lib ) {
+        FreeLibrary( user32lib );
+    }
+
+    if( shcorelib ) {
+        FreeLibrary( shcorelib );
+    }
+
     return EXIT_SUCCESS;
 }
 
