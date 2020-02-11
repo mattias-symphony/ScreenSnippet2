@@ -38,6 +38,11 @@ struct MakeAnnotationsData {
     HCURSOR penCursor;
     HCURSOR eraserCursor;
     int buttonHeight; // Last calculated scaled height of the buttons
+    HBITMAP* menuIcons;
+    int penCount;
+    int highlightCount;
+    int menuMarginH;
+    int menuMarginV;
 };
 
 
@@ -219,7 +224,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                     POINT p = { bounds.left, bounds.bottom };
                     DWORD item = TrackPopupMenu( data->highlightMenu,  TPM_RETURNCMD, p.x, p.y, 0, hwnd, NULL );                
                     if( item > 0 ) {
-                        data->highlightIndex = item - 1;
+                        data->highlightIndex = item - data->penCount - 1;
                     }
                     // Switch to `highlighter` mode whether the user selected a menu item or not (use last index)
                     data->highlighter = TRUE;
@@ -397,32 +402,52 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                 InvalidateRect( hwnd, NULL, FALSE );
             }
         } break;
+
+        case WM_DRAWITEM: {
+            DRAWITEMSTRUCT* item = (DRAWITEMSTRUCT*) lparam;
+            HBRUSH brush; 
+            int offset = 0;
+            if( ( item->itemState & ODS_HOTLIGHT ) || (item->itemState & ODS_SELECTED ) ) {
+                brush = (HBRUSH) CreateSolidBrush( GetSysColor( COLOR_MENUHILIGHT ) );
+                offset = data->penCount + data->highlightCount;
+            } else {
+                brush = (HBRUSH) CreateSolidBrush( GetSysColor( COLOR_MENU ) );
+            }
+            FillRect( item->hDC, &item->rcItem, brush );
+            HDC dc = CreateCompatibleDC( item->hDC );
+            SelectObject( dc, data->menuIcons[ item->itemID + offset - 1 ] );
+            BitBlt( item->hDC, item->rcItem.left + data->menuMarginH, item->rcItem.top + data->menuMarginV, 
+                item->rcItem.right - item->rcItem.left - data->menuMarginH * 2, 
+                item->rcItem.bottom - item->rcItem.top - data->menuMarginV * 2, 
+                dc, 0, 0, SRCCOPY );
+            DeleteObject( dc );
+        }
     }
 
     return DefWindowProc( hwnd, message, wparam, lparam);
 }
 
+int const menuItemWidth = 120;
+int const menuItemHeight = 20; 
 
 // Create an icon representing a pen, for use in the dropdown menus to select pen or highlighter
-HBITMAP WINAPI penIcon( Gdiplus::Pen* pen ) { 
-    int const width = 120;
-    int const height = 20; 
-    int const margin = 20;
+HBITMAP WINAPI penIcon( Gdiplus::Pen* pen, BOOL highlight = FALSE ) { 
     HWND hwndDesktop = GetDesktopWindow(); 
     HDC hdcDesktop = GetDC( hwndDesktop ); 
     HDC hdcMem = CreateCompatibleDC( hdcDesktop ); 
-    COLORREF clrMenu = GetSysColor( COLOR_MENU ); 
- 
+    COLORREF clrMenu = highlight ? GetSysColor( COLOR_MENUHILIGHT ): GetSysColor( COLOR_MENU ); 
+
     HBRUSH hbrOld = (HBRUSH) SelectObject( hdcMem, CreateSolidBrush( clrMenu ) ); 
 
 
-    HBITMAP paHbm = CreateCompatibleBitmap( hdcDesktop, width, height ); 
+    HBITMAP paHbm = CreateCompatibleBitmap( hdcDesktop, menuItemWidth, menuItemHeight ); 
     HBITMAP hbmOld = (HBITMAP) SelectObject( hdcMem, paHbm ); 
  
-    PatBlt( hdcMem, 0, 0, width, height, PATCOPY ); 
+    PatBlt( hdcMem, 0, 0, menuItemWidth, menuItemHeight, PATCOPY ); 
     Gdiplus::Graphics graphics( hdcMem );
     graphics.SetSmoothingMode( Gdiplus::SmoothingModeHighQuality );
-    graphics.DrawLine( pen, Gdiplus::Point( margin, height / 2 ), Gdiplus::Point( width, height / 2 ) );
+    graphics.DrawLine( pen, Gdiplus::Point( 0, menuItemHeight / 2 ), 
+        Gdiplus::Point( menuItemWidth, menuItemHeight / 2 ) );
 
     SelectObject( hdcMem, hbmOld ); 
  
@@ -503,29 +528,52 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snipp
     makeAnnotationsData.penCursor = (HCURSOR) LoadCursorA( GetModuleHandleA( NULL ), MAKEINTRESOURCEA( IDR_PEN ) );
     makeAnnotationsData.eraserCursor = (HCURSOR) LoadCursorA( GetModuleHandleA( NULL ), MAKEINTRESOURCEA( IDR_ERASER ) );
 
+    makeAnnotationsData.menuMarginH = 20;
+    makeAnnotationsData.menuMarginV = 5;
+    HBITMAP menuItemSpace = CreateCompatibleBitmap( GetDC( hwnd ), 
+        menuItemWidth + makeAnnotationsData.menuMarginH * 2, 
+        menuItemHeight + makeAnnotationsData.menuMarginV * 2 ); 
+
     // Create the `pen` menu and add all items to it
     HMENU penMenu = CreatePopupMenu();
     MENUITEMINFOA penItems[] =  { 
-        { sizeof( *penItems ), MIIM_ID | MIIM_BITMAP | MIIM_DATA, 0, 0, 1, 0, 0, 0, 0, 0, 0, penIcon( pens[ 0 ] ) },
-        { sizeof( *penItems ), MIIM_ID | MIIM_BITMAP | MIIM_DATA, 0, 0, 2, 0, 0, 0, 0, 0, 0, penIcon( pens[ 1 ] ) },
-        { sizeof( *penItems ), MIIM_ID | MIIM_BITMAP | MIIM_DATA, 0, 0, 3, 0, 0, 0, 0, 0, 0, penIcon( pens[ 2 ] ) },
-        { sizeof( *penItems ), MIIM_ID | MIIM_BITMAP | MIIM_DATA, 0, 0, 4, 0, 0, 0, 0, 0, 0, penIcon( pens[ 3 ] ) },
+        { sizeof( *penItems ), MIIM_BITMAP, 0, 0, 0, 0, 0, 0, 0, 0, 0, menuItemSpace },
+        { sizeof( *penItems ), MIIM_BITMAP, 0, 0, 0, 0, 0, 0, 0, 0, 0, menuItemSpace },
+        { sizeof( *penItems ), MIIM_BITMAP, 0, 0, 0, 0, 0, 0, 0, 0, 0, menuItemSpace },
+        { sizeof( *penItems ), MIIM_BITMAP, 0, 0, 0, 0, 0, 0, 0, 0, 0, menuItemSpace },
     };
-    for( int i = 0; i < sizeof( penItems ) / sizeof( *penItems ); ++i ) {
+    int const penCount = sizeof( penItems ) / sizeof( *penItems );
+    for( int i = 0; i < penCount; ++i ) {
         InsertMenuItemA( penMenu, i, TRUE, &penItems[ i ] );
+        ModifyMenuA( penMenu, i, MF_BYPOSITION | MF_OWNERDRAW, 1 + i, 0 );          
     }
     makeAnnotationsData.penMenu = penMenu;
+    makeAnnotationsData.penCount = penCount;
 
     // Create the `highlight` menu and add all items to it
     HMENU highlightMenu = CreatePopupMenu();
     MENUITEMINFOA highlightItems[] =  { 
-        { sizeof( *penItems ), MIIM_ID | MIIM_BITMAP | MIIM_DATA, 0, 0, 1, 0, 0, 0, 0, 0, 0, penIcon( highlights[ 0 ] ) },
-        { sizeof( *penItems ), MIIM_ID | MIIM_BITMAP | MIIM_DATA, 0, 0, 2, 0, 0, 0, 0, 0, 0, penIcon( highlights[ 1 ] ) },
+        { sizeof( *penItems ), MIIM_BITMAP, 0, 0, 0, 0, 0, 0, 0, 0, 0, menuItemSpace },
+        { sizeof( *penItems ), MIIM_BITMAP, 0, 0, 0, 0, 0, 0, 0, 0, 0, menuItemSpace },
     };
-    for( int i = 0; i < sizeof( highlightItems ) / sizeof( *highlightItems ); ++i ) {
+    int const highlightCount = sizeof( highlightItems ) / sizeof( *highlightItems );
+    for( int i = 0; i < highlightCount; ++i ) {
         InsertMenuItemA( highlightMenu, i, TRUE, &highlightItems[ i ] );
+        ModifyMenuA( highlightMenu, i, MF_BYPOSITION | MF_OWNERDRAW, 1 + penCount + i, 0 );          
     }
     makeAnnotationsData.highlightMenu = highlightMenu;
+    makeAnnotationsData.highlightCount = highlightCount;
+
+    HBITMAP menuIcons[ 2 * ( penCount + highlightCount ) ];
+    for( int i = 0; i < penCount; ++i ) {
+        menuIcons[ i ] = penIcon( pens[ i ] );
+        menuIcons[ i + penCount + highlightCount ] = penIcon( pens[ i ], TRUE );
+    }
+    for( int i = 0; i < highlightCount; ++i ) {
+        menuIcons[ penCount + i ] = penIcon( highlights[ i ] );
+        menuIcons[ penCount + i + penCount + highlightCount ] = penIcon( highlights[ i ], TRUE );
+    }
+    makeAnnotationsData.menuIcons = menuIcons;
 
     // Create buttons
     makeAnnotationsData.penButton = CreateWindowW( L"BUTTON", localization[ lang ].pen,
