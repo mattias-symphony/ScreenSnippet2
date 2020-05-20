@@ -13,6 +13,7 @@
 #pragma comment( lib, "user32.lib" )
 #pragma comment( lib, "gdi32.lib" )
 #pragma comment( lib, "gdiplus.lib" )
+#pragma comment( lib, "msimg32.lib" )
 
 #define WINDOW_CLASS_NAME L"SymphonyScreenSnippetTool"
 
@@ -169,15 +170,6 @@ int main( int argc, char* argv[] ) {
         return EXIT_SUCCESS;
     }
 
-    bool annotate = true;
-    // Check for --no-annotate switch
-    if( argc > 1 && strcmp( argv[ 1 ], "--no-annotate" ) == 0 ) {
-        annotate = false;
-        // Skip the --no-annotate argument in the remaining code
-        argv++; 
-        argc--;
-    }
-
     // Find language matching command line arg
     int lang = 0; // default to 'en-US'
     if( argc == 3 ) {
@@ -214,20 +206,19 @@ int main( int argc, char* argv[] ) {
         float snippetScale = getSnippetScaling( topLeft, bottomRight );
 
         // Let the user annotate the screen snippet with drawings
-        int result = EXIT_SUCCESS;
-        if( annotate ) {
-            RECT bounds = { 0, 0, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y };
-            result = makeAnnotations( monitor, snippet, bounds, snippetScale, lang );
-        }
-        // Save bitmap
-        Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
-        CLSID pngClsid;
-        if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
-            size_t len = strlen( argv[ 1 ] );
-            wchar_t* filename = filename = new wchar_t[ len + 1 ];
-            mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
-            bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
-            delete[] filename;
+        RECT bounds = { 0, 0, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y };
+        int result = makeAnnotations( GetModuleHandle(NULL), monitor, snippet, bounds, snippetScale, lang );
+        if( result == EXIT_SUCCESS ) {
+            // Save annotated bitmap
+            Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
+            CLSID pngClsid;
+            if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
+                size_t len = strlen( argv[ 1 ] );
+                wchar_t* filename = filename = new wchar_t[ len + 1 ];
+                mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
+                bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
+                delete[] filename;
+            }
         }
 
         DeleteObject( snippet );
@@ -251,7 +242,7 @@ int main( int argc, char* argv[] ) {
 
 
 // pass-through so the program will build with either /SUBSYSTEM:WINDOWS or /SUBSYSTEM:CONSOLE
-extern "C" int __stdcall WinMain( struct HINSTANCE__*, struct HINSTANCE__*, char*, int ) { 
+extern "C" int __stdcall WinMain( struct HINSTANCE__* inst, struct HINSTANCE__*, char*, int ) { 
     return main( __argc, __argv ); 
 }
 

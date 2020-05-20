@@ -3,6 +3,13 @@ IDR_ICON              ICON                      "icon.ico"
 IDR_PEN               CURSOR                    "pen.cur"
 IDR_ERASER            CURSOR                    "eraser.cur"
 
+IDR_PEN_WHITE         ICON                      "pen_white.ico"
+IDR_PEN_GREY          ICON                      "pen_grey.ico"
+IDR_ERASER_WHITE      ICON                      "eraser_white.ico"
+IDR_ERASER_GREY       ICON                      "eraser_grey.ico"
+IDR_HIGHLIGHT_WHITE   ICON                      "highlight_white.ico"
+IDR_HIGHLIGHT_GREY    ICON                      "highlight_grey.ico"
+
 #define VER_MAJOR 1
 #define VER_MINOR 0
 #define VER_REVISION 7

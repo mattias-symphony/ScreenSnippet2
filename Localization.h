@@ -7,8 +7,8 @@ static struct {
 	wchar_t const* pen;
 	wchar_t const* title;
 } localization[] {
-	{ "en-US", L"Done", L"Erase", L"Highlight", L"Pen", L"Snipping Tool", },
-	{ "fr-FR", L"Terminé", L"Effacer", L"Surligner", L"Stylo", L"Outil Capture", },
+	{ "en-US", L"DONE", L"Erase", L"Highlight", L"Pen", L"Snipping Tool", },
+	{ "fr-FR", L"TERMINÉ", L"Effacer", L"Surligner", L"Stylo", L"Outil Capture", },
 	{ "ja-JP", L"完了", L"消去する", L"ハイライト", L"ペン", L"タイトル", },
 };
 

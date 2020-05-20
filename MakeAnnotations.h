@@ -11,6 +11,8 @@ struct Stroke {
 
 // State for the annotations window, this is set up and attached to the window in the `makeAnnotations` function
 struct MakeAnnotationsData {
+    HINSTANCE hinstance;
+    int lang;
     float snippetScale; // Scale of the display the snippet was captured on
     float scale; // Current scale the snippet is displayed at
     RECT bounds; // Bounds of the screen snippet
@@ -150,6 +152,24 @@ int resizeButton( HWND button, float prevScale, float newScale ) {
 }
 
 
+void FillRoundRectangle(Gdiplus::Graphics* g, Gdiplus::Brush *p, Gdiplus::Rect& rect, UINT8 radius)
+{
+	if (g == NULL) return;
+	Gdiplus::GraphicsPath path;
+
+	path.AddLine(rect.X + radius, rect.Y, rect.X + rect.Width - (radius * 2), rect.Y);
+	path.AddArc(rect.X + rect.Width - (radius * 2), rect.Y, radius * 2, radius * 2, 270, 90);
+	path.AddLine(rect.X + rect.Width, rect.Y + radius, rect.X + rect.Width, rect.Y + rect.Height - (radius * 2));
+	path.AddArc(rect.X + rect.Width - (radius * 2), rect.Y + rect.Height - (radius * 2), radius * 2, radius * 2, 0, 90);
+	path.AddLine(rect.X + rect.Width - (radius * 2), rect.Y + rect.Height, rect.X + radius, rect.Y + rect.Height);
+	path.AddArc(rect.X, rect.Y + rect.Height - (radius * 2), radius * 2, radius * 2, 90, 90);
+	path.AddLine(rect.X, rect.Y + rect.Height - (radius * 2), rect.X, rect.Y + radius);
+	path.AddArc(rect.X, rect.Y, radius * 2, radius * 2, 180, 90);
+	path.CloseFigure();
+
+	g->FillPath(p, &path);
+}
+
 static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     struct MakeAnnotationsData* data = (struct MakeAnnotationsData*) GetWindowLongPtrA( hwnd, GWLP_USERDATA );
     int const spaceForButtons = data ? (int)( data->buttonHeight * 1.7f ) : 50; // Reserve some pixels at the top for the buttons
@@ -186,7 +206,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                     HDC dc = GetDC( hwnd );
                     RECT r;
                     GetClientRect( hwnd, &r  );
-                    FillRect( dc, &r, GetStockBrush( LTGRAY_BRUSH ) );
+                    FillRect( dc, &r, GetStockBrush( WHITE_BRUSH ) );
                     ReleaseDC( hwnd, dc );
                 }
             }
@@ -243,7 +263,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
             POINT pos;
             GetCursorPos( &pos );
             if( ScreenToClient( hwnd, &pos ) ) {
-                if( pos.y < spaceForButtons ) {
+                if( pos.y < spaceForButtons || pos.y > spaceForButtons + data->bounds.bottom ) {
                     SetCursor( data->arrowCursor );
                 } else if( data->eraser ) {
                     SetCursor( data->eraserCursor );
@@ -267,7 +287,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                 RECT r;
                 GetClientRect( hwnd, &r  );
                 r.bottom = r.top + spaceForButtons; 
-                FillRect( dc, &r, GetStockBrush( LTGRAY_BRUSH ) );
+                FillRect( dc, &r, GetStockBrush( WHITE_BRUSH ) );
                 ReleaseDC( hwnd, dc );
                 return 1;
             }
@@ -279,7 +299,7 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
             HDC dc = GetDC( hwnd );
             RECT r;
             GetClientRect( hwnd, &r  );
-            FillRect( dc, &r, GetStockBrush( LTGRAY_BRUSH ) );
+            FillRect( dc, &r, GetStockBrush( WHITE_BRUSH ) );
             ReleaseDC( hwnd, dc );
         } break;
 
@@ -342,7 +362,6 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
                     backbuffer, 0, 0, bounds.right - bounds.left, bounds.bottom - bounds.top, SRCCOPY );
             }
 
-            
             EndPaint( hwnd, &ps );
         } break;
 
@@ -405,22 +424,96 @@ static LRESULT CALLBACK makeAnnotationsWndProc( HWND hwnd, UINT message, WPARAM 
 
         case WM_DRAWITEM: {
             DRAWITEMSTRUCT* item = (DRAWITEMSTRUCT*) lparam;
-            HBRUSH brush; 
-            int offset = 0;
-            if( ( item->itemState & ODS_HOTLIGHT ) || (item->itemState & ODS_SELECTED ) ) {
-                brush = (HBRUSH) CreateSolidBrush( GetSysColor( COLOR_MENUHILIGHT ) );
-                offset = data->penCount + data->highlightCount;
-            } else {
-                brush = (HBRUSH) CreateSolidBrush( GetSysColor( COLOR_MENU ) );
+            if( item->CtlType == ODT_MENU ) {
+                HBRUSH brush; 
+                int offset = 0;
+                if( ( item->itemState & ODS_HOTLIGHT ) || (item->itemState & ODS_SELECTED ) ) {
+                    brush = (HBRUSH) CreateSolidBrush( GetSysColor( COLOR_MENUHILIGHT ) );
+                    offset = data->penCount + data->highlightCount;
+                } else {
+                    brush = (HBRUSH) CreateSolidBrush( GetSysColor( COLOR_MENU ) );
+                }
+                //FillRect( item->hDC, &item->rcItem, brush );
+                HDC dc = CreateCompatibleDC( item->hDC );
+                SelectObject( dc, data->menuIcons[ item->itemID + offset - 1 ] );
+                BitBlt( item->hDC, item->rcItem.left + data->menuMarginH, item->rcItem.top + data->menuMarginV, 
+                    item->rcItem.right - item->rcItem.left - data->menuMarginH * 2, 
+                    item->rcItem.bottom - item->rcItem.top - data->menuMarginV * 2, 
+                    dc, 0, 0, SRCCOPY );
+                DeleteObject( dc );
             }
-            FillRect( item->hDC, &item->rcItem, brush );
-            HDC dc = CreateCompatibleDC( item->hDC );
-            SelectObject( dc, data->menuIcons[ item->itemID + offset - 1 ] );
-            BitBlt( item->hDC, item->rcItem.left + data->menuMarginH, item->rcItem.top + data->menuMarginV, 
-                item->rcItem.right - item->rcItem.left - data->menuMarginH * 2, 
-                item->rcItem.bottom - item->rcItem.top - data->menuMarginV * 2, 
-                dc, 0, 0, SRCCOPY );
-            DeleteObject( dc );
+
+	        #define ICON_WIDTH 16
+	        #define ICON_HEIGHT 16
+
+            if( item->CtlType == ODT_BUTTON ) {
+                HICON ico = (HICON) LoadIcon( data->hinstance, MAKEINTRESOURCE( IDR_ICON ) );
+                if( item->CtlID == 1 ) {
+                    ico = (HICON) LoadImage( data->hinstance, MAKEINTRESOURCE( item->itemState == ODS_FOCUS ? IDR_PEN_WHITE : IDR_PEN_GREY ), IMAGE_ICON, ICON_WIDTH,ICON_HEIGHT,0 );
+                }
+
+                if( item->CtlID == 2 ) {
+                    ico = (HICON) LoadImage( data->hinstance, MAKEINTRESOURCE( item->itemState == ODS_FOCUS ? IDR_HIGHLIGHT_WHITE : IDR_HIGHLIGHT_GREY ), IMAGE_ICON, ICON_WIDTH,ICON_HEIGHT,0 );
+                }
+
+                if( item->CtlID == 3 ) {
+                    ico = (HICON) LoadImage( data->hinstance, MAKEINTRESOURCE(item->itemState == ODS_FOCUS ? IDR_ERASER_WHITE : IDR_ERASER_GREY), IMAGE_ICON, ICON_WIDTH,ICON_HEIGHT,0 );
+                }
+
+
+                if( item->CtlID == 4 ) {
+                    FillRect( item->hDC, &item->rcItem, GetStockBrush( WHITE_BRUSH ) );
+                    Gdiplus::Graphics graphics( item->hDC );
+                    graphics.SetSmoothingMode( Gdiplus::SmoothingModeHighQuality );
+
+                    Gdiplus::SolidBrush brush( 0xff008EFF );
+                    Gdiplus::Rect rect( item->rcItem.left, item->rcItem.top, item->rcItem.right - item->rcItem.left - 1, item->rcItem.bottom - item->rcItem.top - 1  );
+                    FillRoundRectangle(&graphics, &brush, rect, ( item->rcItem.bottom - item->rcItem.top - 1 ) / 2 );
+                    SetBkColor(item->hDC, RGB(0x00,0x8E,0xFF));
+                    SetTextColor(item->hDC, RGB(255,255,255));
+
+                    HFONT font = CreateFont(
+                      15,    //cHeight,
+                      0,    //cWidth,
+                      0,    //cEscapement,
+                      0,    //cOrientation,
+                      500,    //cWeight,
+                      FALSE,  //bItalic,
+                      FALSE,  //bUnderline,
+                      FALSE,  //bStrikeOut,
+                      DEFAULT_CHARSET,  //iCharSet,
+                      OUT_DEFAULT_PRECIS,  //iOutPrecision,
+                      CLIP_STROKE_PRECIS,  //iClipPrecision,
+                      CLEARTYPE_NATURAL_QUALITY,  //iQuality,
+                      VARIABLE_PITCH,  //iPitchAndFamily,
+                      L"Segoe UI" //pszFaceName
+                    );
+                    SelectObject( item->hDC, font);
+                    DrawText( item->hDC, localization[ data->lang ].done, -1, &item->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE );
+                } else {
+
+
+                    FillRect( item->hDC, &item->rcItem, GetStockBrush( WHITE_BRUSH ) );
+                    if( item->itemState == ODS_FOCUS ) {
+                        Gdiplus::Graphics graphics( item->hDC );
+                        graphics.SetSmoothingMode( Gdiplus::SmoothingModeHighQuality );
+                        Gdiplus::SolidBrush brush( 0xff008EFF );
+                        Gdiplus::Rect rect( item->rcItem.left, item->rcItem.top, item->rcItem.right - item->rcItem.left - 1, item->rcItem.bottom - item->rcItem.top - 1  );                    
+                        FillRoundRectangle(&graphics, &brush, rect, ( item->rcItem.bottom - item->rcItem.top - 1 ) / 6 );
+                    }
+
+                    RECT rect = item->rcItem;
+                    DrawIconEx(
+		                    item->hDC,
+		                    (rect.right - rect.left - ICON_WIDTH) / 2,
+		                    (rect.bottom - rect.top - ICON_HEIGHT) / 2,
+		                    (HICON) ico,
+		                    ICON_WIDTH,
+		                    ICON_HEIGHT,
+		                    0, NULL, DI_NORMAL
+	                    );
+                }
+            }
         }
     }
 
@@ -458,7 +551,7 @@ HBITMAP WINAPI penIcon( Gdiplus::Pen* pen, BOOL highlight = FALSE ) {
 }
 
 
-int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snippetScale, int lang ) {
+int makeAnnotations( HINSTANCE hinstance, HMONITOR monitor, HBITMAP snippet, RECT bounds, float snippetScale, int lang ) {
     HICON icon = LoadIcon( GetModuleHandleA( NULL ), MAKEINTRESOURCE( IDR_ICON ) );
     
     // Register window class
@@ -470,7 +563,7 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snipp
         GetModuleHandleA( NULL ),               // hInstance
         icon,                                   // hIcon
         NULL,                                   // hCursor
-        (HBRUSH) GetStockBrush( LTGRAY_BRUSH ), // hbrBackground
+        (HBRUSH) GetStockBrush( WHITE_BRUSH ), // hbrBackground
         NULL,                                   // lpszMenuName
         WINDOW_CLASS_NAME                       // lpszClassName
     };
@@ -478,7 +571,7 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snipp
     
 
     // Calculate window size from snippet bounds. Add some extra space and a min size to fit buttons
-    int width = max(600, bounds.right - bounds.left) + 50;
+    int width = max(600, bounds.right - bounds.left);
     int height = bounds.bottom - bounds.top + 150;
 
     // Determine position on requested monitor
@@ -515,6 +608,8 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snipp
 
     // Runtime state for annotations window
     struct MakeAnnotationsData makeAnnotationsData = {      
+        hinstance,
+        lang,
         snippetScale,
         1.0f,
         bounds,
@@ -576,30 +671,32 @@ int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snipp
     makeAnnotationsData.menuIcons = menuIcons;
 
     // Create buttons
+    int offs = ( width - (39 * 2 + 24) ) / 2;
     makeAnnotationsData.penButton = CreateWindowW( L"BUTTON", localization[ lang ].pen,
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
-        5, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT | BS_OWNERDRAW,
+        offs, 7, 24, 24, hwnd, (HMENU) 1, GetModuleHandleW( NULL ), NULL );
     
     makeAnnotationsData.highlightButton = CreateWindowW( L"BUTTON", localization[ lang ].highlight,
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
-        5 + 80 * 1, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT | BS_OWNERDRAW,
+        offs + 39 * 1, 7, 24, 24, hwnd, (HMENU) 2, GetModuleHandleW( NULL ), NULL );
     
     makeAnnotationsData.eraseButton = CreateWindowW( L"BUTTON", localization[ lang ].erase,
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
-        5 + 80 * 2, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT | BS_OWNERDRAW,
+        offs + 39 * 2, 7, 24, 24, hwnd, (HMENU) 3, GetModuleHandleW( NULL ), NULL );
     
     makeAnnotationsData.doneButton = CreateWindowW( L"BUTTON", localization[ lang ].done,
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT,
-        5 + 10 + 80 * 3, 7, 75, 20, hwnd, NULL, GetModuleHandleW( NULL ), NULL );
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON | BS_FLAT | BS_OWNERDRAW,
+        width - 120, 7 + bounds.bottom - bounds.top + 50 , 80, 32, hwnd, (HMENU) 4, GetModuleHandleW( NULL ), NULL );
 
     float scale = getDisplayScaling( hwnd );
     if( scale == 0.0f ) {
         scale = 1.0f;
     }
-    resizeButton( makeAnnotationsData.penButton, 1.0f, scale );
+    
+    resizeButton( makeAnnotationsData.doneButton, 1.0f, scale );
     resizeButton( makeAnnotationsData.highlightButton, 1.0f, scale );
     resizeButton( makeAnnotationsData.eraseButton, 1.0f, scale );
-    makeAnnotationsData.buttonHeight = resizeButton( makeAnnotationsData.doneButton, 1.0f, scale );
+    makeAnnotationsData.buttonHeight = resizeButton( makeAnnotationsData.penButton, 1.0f, scale );
 
     // Attach state data to window instance
     SetWindowLongPtrA( hwnd, GWLP_USERDATA, (LONG_PTR)&makeAnnotationsData );
