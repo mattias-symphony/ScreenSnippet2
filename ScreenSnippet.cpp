@@ -219,16 +219,19 @@ int main( int argc, char* argv[] ) {
             RECT bounds = { 0, 0, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y };
             result = makeAnnotations( monitor, snippet, bounds, snippetScale, lang );
         }
-        // Save bitmap
-        Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
-        CLSID pngClsid;
-        if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
-            size_t len = strlen( argv[ 1 ] );
-            wchar_t* filename = filename = new wchar_t[ len + 1 ];
-            mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
-            bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
-            delete[] filename;
-        }
+		
+		if( result == EXIT_SUCCESS ) {
+			// Save bitmap
+			Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
+			CLSID pngClsid;
+			if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
+				size_t len = strlen( argv[ 1 ] );
+				wchar_t* filename = filename = new wchar_t[ len + 1 ];
+				mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
+				bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
+				delete[] filename;
+			}
+		}
 
         DeleteObject( snippet );
     }
