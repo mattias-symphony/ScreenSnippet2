@@ -104,7 +104,8 @@ static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms )
     }
 
     // Check if user have let go of mouse button
-    if( selectRegionData->dragging && ( GetAsyncKeyState( VK_LBUTTON ) & 0x8000 ) == 0 ) {
+    DWORD vk_button = GetSystemMetrics( SM_SWAPBUTTON ) ? VK_RBUTTON : VK_LBUTTON;
+    if( selectRegionData->dragging && ( GetAsyncKeyState( vk_button ) & 0x8000 ) == 0 ) {
         if( ( selectRegionData->bottomRight.x - selectRegionData->topLeft.x ) == 0 ||
             ( selectRegionData->bottomRight.y - selectRegionData->topLeft.y ) == 0 ) {
         selectRegionData->dragging = FALSE;

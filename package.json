@@ -1,6 +1,6 @@
 {
   "name": "screen-snippet",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "screen snippet util for windows, new version",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
