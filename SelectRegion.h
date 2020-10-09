@@ -337,6 +337,9 @@ static int selectRegion( RECT* region ) {
         SetWindowLongA( hwnd[ i ], GWL_STYLE, WS_VISIBLE );
         SetLayeredWindowAttributes( hwnd[ i ], transparent, 100, LWA_ALPHA | LWA_COLORKEY );
         UpdateWindow( hwnd[ i ] );
+
+        // Fix needed for running Win7 with classic theme. If we don't set position here, the whole window will be offset
+        SetWindowPos( hwnd[ i ], NULL, bounds.left, bounds.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED );
     }
 
     // Call timer function directly - it will set up a timer based call to itself as the last thing it does
