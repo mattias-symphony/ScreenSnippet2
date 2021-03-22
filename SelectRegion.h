@@ -65,22 +65,30 @@ static void globalToClient( struct Display* display, POINT* p ) {
 
 // Check for mouse move, mouse button release and ESC keypress at regular intervals
 static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms ) {
+	LOG_INFO( "Enter timerProc: hwnd=%" PRIX64, (uint64_t)(uintptr_t) hwnd );
     struct SelectRegionData* selectRegionData = (struct SelectRegionData*) id;
 
     // Read current mouse pos in screen coordinates
     POINT p;
     GetCursorPos( &p );
+	LOG_INFO( "Cursor pos=%d,%d", p.x, p.y );
 
     // Map cursor postion to global, dpi-adjusted coordinates (by finding the screen it is on)
     BOOL found = FALSE;
+	LOG_INFO( "Find window matching cursor pos" );
     for( int i = 0; i < selectRegionData->displayCount; ++i ) {
         RECT r;
         GetWindowRect( selectRegionData->displays[ i ].hwnd, &r );      
         ++r.right; // Adjust the region to include rightmost and bottommost pixels, as window rect excludes bottom-right 
         ++r.bottom;
+		LOG_INFO( "    hwnd=%" PRIX64 " bounds= %d,%d,%d,%d", (uint64_t)(uintptr_t) selectRegionData->displays[ i ].hwnd,
+			r.left, r.top, r.right, r.bottom );
         if( PtInRect( &r, p ) ) {
+			LOG_INFO( "        Window contains cursor %d,%d", p.x, p.y );
             ScreenToClient( selectRegionData->displays[ i ].hwnd, &p );
+			LOG_INFO( "        Cursor transformed to client space %d,%d", p.x, p.y );
             clientToGlobal( &selectRegionData->displays[ i ], &p );
+			LOG_INFO( "        Cursor transformed to global space %d,%d", p.x, p.y );
             found = TRUE;
             break;
         } 
@@ -88,6 +96,7 @@ static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms )
 
     // Abort if user press Esc
     if( (GetAsyncKeyState( VK_ESCAPE ) & 0x8000 ) != 0 ) {
+		LOG_INFO( "User aborted by pressing ESC" );
         selectRegionData->aborted = TRUE;
     }
 
@@ -99,20 +108,28 @@ static void CALLBACK timerProc( HWND hwnd, UINT message, UINT_PTR id, DWORD ms )
             // Invalidate each window to cause redraw of rect
             for( int i = 0; i < selectRegionData->displayCount; ++i ) {
                 InvalidateRect( selectRegionData->displays[ i ].hwnd, NULL, FALSE );
+				LOG_INFO( "Invalidating window hwnd=%" PRIX64, (uint64_t)(uintptr_t) selectRegionData->displays[ i ].hwnd );
             }
         }
-    }
+    } else {
+		LOG_INFO( "No window found containing cursor pos" );
+	}
 
     // Check if user have let go of mouse button
     DWORD vk_button = GetSystemMetrics( SM_SWAPBUTTON ) ? VK_RBUTTON : VK_LBUTTON;
     if( selectRegionData->dragging && ( GetAsyncKeyState( vk_button ) & 0x8000 ) == 0 ) {
+		LOG_INFO( "Mouse button released(%s button)", vk_button == VK_RBUTTON ? "right" : "left" );
         if( ( selectRegionData->bottomRight.x - selectRegionData->topLeft.x ) == 0 ||
-            ( selectRegionData->bottomRight.y - selectRegionData->topLeft.y ) == 0 ) {
-        selectRegionData->dragging = FALSE;
+         ( selectRegionData->bottomRight.y - selectRegionData->topLeft.y ) == 0 ) {				
+			selectRegionData->dragging = FALSE;
+			LOG_INFO( "User clicked and released on the same point, so ignore this selection" );
+			LOG_INFO( "Dragging stopped" );
         } else {
             // Complete region selection
             selectRegionData->dragging = FALSE;
             selectRegionData->done = TRUE;
+			LOG_INFO( "Region selection completed: %d,%d,%d,%d", selectRegionData->topLeft.x, selectRegionData->topLeft.y, selectRegionData->bottomRight.x, selectRegionData->bottomRight.y );
+			LOG_INFO( "Dragging stopped" );
         }
     }
 
@@ -138,22 +155,33 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
     struct SelectRegionData* selectRegionData = (struct SelectRegionData*) GetWindowLongPtrA( hwnd, GWLP_USERDATA );
     switch( message ) {
         case WM_ERASEBKGND: {
+			LOG_INFO( "WM_ERASEBKGND hwnd=%" PRIX64, (uint64_t)(uintptr_t) hwnd );
             // Only do the default background clear before the user starts dragging
             // Once dragging starts, we clear by erasing the previous rect
             if( selectRegionData && selectRegionData->dragging ) {
+				LOG_INFO( "Erasing blocked" );
                 return 1;
-            }
+            } else {
+				LOG_INFO( "Erasing allowed" );
+			}
         } break;
         case WM_PAINT: {
+			LOG_INFO( "WM_PAINT hwnd=%" PRIX64, (uint64_t)(uintptr_t) hwnd );
+
             // Find the Display instance for this window
             struct Display* display = NULL;
             int index = 0;
+			LOG_INFO( "Finding display" );
             for( int i = 0; i < selectRegionData->displayCount; ++i ) {
                 if( selectRegionData->displays[ i ].hwnd == hwnd ) {
                     display = &selectRegionData->displays[ i ];
+					LOG_INFO( "Display found (%d): hwnd=%" PRIX64, i, (uint64_t)(uintptr_t) selectRegionData->displays[ i ].hwnd );
                     break;
                 }
             }
+			if( !display ) {
+				LOG_ERROR( "Display not found" );
+			}
             // Draw the current dragged rect onto this window - we draw regardless of whether the rect is inside the
             // window or not - we just let windows handle clipping for us
             if( selectRegionData->dragging && display ) {
@@ -181,6 +209,9 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
                 display->prevTopLeft = selectRegionData->topLeft;
                 display->prevBottomRight = selectRegionData->bottomRight;
 
+				LOG_INFO( "Prev rect (global coords) %d,%d,%d,%d", pp1.x, pp1.y, pp2.x, pp2.y );
+				LOG_INFO( "Curr rect (global coords) %d,%d,%d,%d", cp1.x, cp1.y, cp2.x, cp2.y );
+
                 // Map from global, dpi-adjusted coordinates to client coordinates so we can draw on the current window
                 globalToClient( display, &cp1 );
                 globalToClient( display, &cp2 );
@@ -205,6 +236,9 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
                 RECT frame;
                 UnionRect( &frame, &curr, &prev );          
 
+				LOG_INFO( "Erasing rect (client coords) %d,%d,%d,%d", prev.left, prev.top, prev.right, prev.bottom );
+				LOG_INFO( "Drawing rect (client coords) %d,%d,%d,%d", curr.left, curr.top, curr.right, curr.bottom );
+
                 RECT client;
                 GetClientRect( hwnd, &client );
 
@@ -212,6 +246,7 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
                 IntersectRect( &bounds, &frame, &client );
                 InflateRect( &bounds, 4, 4 );
 
+				LOG_INFO( "Copying area %d,%d,%d,%d", bounds.left, bounds.top, bounds.right, bounds.bottom );
                 // Copy the updated area from backbuffer to the window
                 PAINTSTRUCT ps; 
                 HDC dc = BeginPaint( hwnd, &ps );
@@ -221,24 +256,33 @@ static LRESULT CALLBACK selectRegionWndProc( HWND hwnd, UINT message, WPARAM wpa
             }
         } break;
         case WM_LBUTTONDOWN: {
+			LOG_INFO( "WM_LBUTTONDOWN hwnd=%" PRIX64, (uint64_t)(uintptr_t) hwnd );
             // Find the Display instance for this window
             struct Display* display = NULL;
             int index = 0;
+			LOG_INFO( "Finding display" );
             for( int i = 0; i < selectRegionData->displayCount; ++i ) {
                 if( selectRegionData->displays[ i ].hwnd == hwnd ) {
                     display = &selectRegionData->displays[ i ];
+					LOG_INFO( "Display found (%d): hwnd=%" PRIX64, i, (uint64_t)(uintptr_t) selectRegionData->displays[ i ].hwnd );
                     break;
                 }
             }
+			if( !display ) {
+				LOG_ERROR( "Display not found" );
+			}
             // Store the starting point of the drag rect, in global, dpi-adjusted coordinates
             POINT p = { GET_X_LPARAM( lparam ), GET_Y_LPARAM( lparam ) };
+			LOG_INFO( "Mouse coordinates (client coords): %d,%d", p.x, p.y );
             clientToGlobal( display, &p );
+			LOG_INFO( "Mouse coordinates (global coords): %d,%d", p.x, p.y );
             selectRegionData->topLeft.x = p.x;
             selectRegionData->topLeft.y = p.y; 
             selectRegionData->bottomRight.x = p.x;
             selectRegionData->bottomRight.y = p.y;
             selectRegionData->dragging = TRUE;
             InvalidateRect( hwnd, NULL, FALSE );
+			LOG_INFO( "Dragging started" );
         } break;
     }
     return DefWindowProc( hwnd, message, wparam, lparam);
@@ -264,8 +308,21 @@ static BOOL CALLBACK findScreens( HMONITOR monitor, HDC dc, LPRECT rect, LPARAM 
 
     findScreensData->info[ findScreensData->count ] = info;
     findScreensData->mode[ findScreensData->count ] = mode;
+	
+	LOG_INFO( "Monitor found(%d) monitor=%" PRIX64, findScreensData->count, (uint64_t)(uintptr_t) monitor );
     ++findScreensData->count;
+
+	LOG_INFO( "    info.szDevice=%s", info.szDevice );	
+	LOG_INFO( "    info.rcMonitor=%d,%d,%d,%d", info.rcMonitor.left, info.rcMonitor.top, info.rcMonitor.right, info.rcMonitor.bottom );	
+	LOG_INFO( "    info.rcWork=%d,%d,%d,%d", info.rcWork.left, info.rcWork.top, info.rcWork.right, info.rcWork.bottom );	
+	LOG_INFO( "    info.primary=%s", ( info.dwFlags & MONITORINFOF_PRIMARY ) ? "TRUE" : "FALSE" );	
+
+	LOG_INFO( "    mode.dmPelsWidth=%d", mode.dmPelsWidth );	
+	LOG_INFO( "    mode.dmPelsHeight=%d", mode.dmPelsHeight );	
+	LOG_INFO( "    mode.dmPosition=%d,%d", mode.dmPosition.x, mode.dmPosition.y );	
+
     if( findScreensData->count >= sizeof( findScreensData->info ) / sizeof( *findScreensData->info ) ) {
+		LOG_ERROR( "More than %d displays found - not supported.", MAX_DISPLAYS );
         return FALSE;
     }
     return TRUE;
@@ -276,10 +333,13 @@ static BOOL CALLBACK findScreens( HMONITOR monitor, HDC dc, LPRECT rect, LPARAM 
 static int selectRegion( RECT* region ) {
     // Enumerate all displays
     struct FindScreensData findScreensData = { 0 };
+	LOG_INFO( "Enumerating monitors" );
     EnumDisplayMonitors( NULL, NULL, findScreens, (LPARAM) &findScreensData );
     if( findScreensData.count <= 0 ) {
+		LOG_INFO( "No monitors found, selectRegion failed." );
         return EXIT_FAILURE;
     }
+	LOG_INFO( "Monitors found: %d", findScreensData.count );
 
     COLORREF frame = RGB( 255, 255, 255 );
     COLORREF transparent = RGB( 0, 255, 0 );
@@ -324,11 +384,16 @@ static int selectRegion( RECT* region ) {
         hwnd[ i ] = display->hwnd = CreateWindowExW( WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, wc.lpszClassName, 
             NULL, WS_VISIBLE, bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, 
             NULL, NULL, GetModuleHandleA( NULL ), 0 );
+		
+		LOG_INFO( "Creating window for display(%d) hwnd=%" PRIX64 " bounds=%d,%d,%d,%d", i, (uint64_t)(uintptr_t) hwnd[ i ], bounds.left, bounds.top, bounds.right, bounds.bottom );
         
         // Create off-screen drawing surface for window
         HDC dc = GetDC( display->hwnd );
+		LOG_INFO( "    dc=%" PRIX64, (uint64_t)(uintptr_t) dc );
         HBITMAP backbuffer = CreateCompatibleBitmap( dc, bounds.right - bounds.left, bounds.bottom - bounds.top );
+		LOG_INFO( "    backbuffer=%" PRIX64, (uint64_t)(uintptr_t) backbuffer );
         display->backbuffer = CreateCompatibleDC( dc );
+		LOG_INFO( "    backbufferDc=%" PRIX64, (uint64_t)(uintptr_t) display->backbuffer );
         SelectObject( display->backbuffer, backbuffer );
         ReleaseDC( display->hwnd, dc );
 
@@ -347,6 +412,7 @@ static int selectRegion( RECT* region ) {
 
     // Main loop, keeps running while there are still windows open, and the user have not aborted or completed selection
     int running = count;
+	LOG_INFO( "Entering main windows loop for region selection" );
     while( running && !selectRegionData.done && !selectRegionData.aborted )  {
         // Process messages for each window
         for( int i = 0; i < count; ++i ) {
@@ -358,6 +424,7 @@ static int selectRegion( RECT* region ) {
                 // explicity `Sleep` to the loop.
                 while( PeekMessageA( &msg, hwnd[ i ], 0, 0, PM_REMOVE ) ) {
                     if( msg.message == WM_CLOSE ) { // Detect closing of windows
+						LOG_INFO( "Destroying window %d (%d left) hwnd=%" PRIX64, i, running, (uint64_t)(uintptr_t) hwnd[i] );
                         DestroyWindow( hwnd[ i ] ); 
                         hwnd[ i ] = NULL;
                         --running;
@@ -369,6 +436,7 @@ static int selectRegion( RECT* region ) {
         }
         Sleep( 16 ); // Limit the update rate, as we use PeekMessage rather then GetMessage which would be blocking
     }
+	LOG_INFO( "Exit main windows loop for region selection" );
 
     // Cleanup
     for( int i = 0; i < count; ++i ) {
@@ -381,23 +449,29 @@ static int selectRegion( RECT* region ) {
     DeleteObject( selectRegionData.background );
     DeleteObject( selectRegionData.transparent );
     UnregisterClassW( wc.lpszClassName, GetModuleHandleW( NULL ) );
+	LOG_INFO( "Cleanup done" );
     
     // If the user aborted, we don't return the region
     if( !selectRegionData.done ) {
+		LOG_INFO( "User aborted screen selection" );
         return EXIT_FAILURE;
     }
 
     RECT selectedRegion = { selectRegionData.topLeft.x, selectRegionData.topLeft.y, 
         selectRegionData.bottomRight.x, selectRegionData.bottomRight.y, };
+	LOG_INFO( "Selected region: %d,%d,%d,%d", selectedRegion.left, selectedRegion.top, selectedRegion.right, selectedRegion.bottom );
 
     // Swap top/bottom and left/right as necessary (user can drag in any direction they want)   
     if( selectedRegion.left > selectedRegion.right ) {
         swap( &selectedRegion.left, &selectedRegion.right );
+		LOG_INFO( "Swapped left/right region points" );
     }
     if( selectedRegion.top > selectedRegion.bottom ) {
         swap( &selectedRegion.top, &selectedRegion.bottom );
+		LOG_INFO( "Swapped top/bottom region points" );
     }
 
+	LOG_INFO( "Region selection successful: %d,%d,%d,%d", selectedRegion.left, selectedRegion.top, selectedRegion.right, selectedRegion.bottom );
     *region = selectedRegion;
     return EXIT_SUCCESS;
 }
