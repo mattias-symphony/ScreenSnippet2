@@ -3,9 +3,9 @@ IDR_ICON              ICON                      "icon.ico"
 IDR_PEN               CURSOR                    "pen.cur"
 IDR_ERASER            CURSOR                    "eraser.cur"
 
-#define VER_MAJOR 1
+#define VER_MAJOR 2
 #define VER_MINOR 0
-#define VER_REVISION 11
+#define VER_REVISION 0
 
 
 
