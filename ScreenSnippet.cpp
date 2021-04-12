@@ -13,6 +13,7 @@
 #pragma comment( lib, "user32.lib" )
 #pragma comment( lib, "gdi32.lib" )
 #pragma comment( lib, "gdiplus.lib" )
+#pragma comment( lib, "shell32.lib" )
 
 #define WINDOW_CLASS_NAME L"SymphonyScreenSnippetTool"
 
@@ -190,35 +191,57 @@ int main( int argc, char* argv[] ) {
         }
     }
 
-    // Start GDI+ (used for semi-transparent drawing and anti-aliased curve drawing)
-    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-    ULONG_PTR gdiplusToken;
-    Gdiplus::GdiplusStartup( &gdiplusToken, &gdiplusStartupInput, NULL );
+	// Start GDI+ (used for semi-transparent drawing and anti-aliased curve drawing)
+	Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+	ULONG_PTR gdiplusToken;
+	Gdiplus::GdiplusStartup( &gdiplusToken, &gdiplusStartupInput, NULL );
 
-    // Let the user select a region on the screen
-    RECT region;
-    if( selectRegion( &region ) == EXIT_SUCCESS ) { 
-        POINT topLeft = { region.left, region.top };
-        POINT bottomRight = { region.right, region.bottom };
 
-        // Enforce a minumum size (to avoid ending up with an image you can't even see in the annotation window)
-        if( bottomRight.x - topLeft.x < 32 ) {
-            bottomRight.x = topLeft.x + 32;
-        }
-        if( bottomRight.y - topLeft.y < 32 ) {
-            bottomRight.y = topLeft.y + 32;
-        }
-        
-        // Grab a bitmap of the selected region
-        HBITMAP snippet = grabSnippet( topLeft, bottomRight );
-        float snippetScale = getSnippetScaling( topLeft, bottomRight );
+	HBITMAP snippet = NULL;
+	float snippetScale = 1.0f;
 
-        // Let the user annotate the screen snippet with drawings
-        int result = EXIT_SUCCESS;
-        if( annotate ) {
-            RECT bounds = { 0, 0, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y };
-            result = makeAnnotations( monitor, snippet, bounds, snippetScale, lang );
-        }
+	// Try to make use of built-in windows SnippingTool first
+	Wow64DisableWow64FsRedirection( NULL ); // Disable Wow64 redirection, so it works for both 32/64 bit builds
+	SHELLEXECUTEINFOA info = { sizeof( SHELLEXECUTEINFOA ) };
+	info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+	info.lpFile = "SnippingTool";
+	info.lpParameters = "/clip";
+	info.nShow = SW_SHOWNORMAL ;	
+	if( ShellExecuteExA( &info ) ) {
+		WaitForSingleObject( info.hProcess, INFINITE );
+		if( IsClipboardFormatAvailable( CF_BITMAP ) ) {
+			if( OpenClipboard( NULL ) ) {
+				snippet = (HBITMAP) GetClipboardData( CF_BITMAP );
+				CloseClipboard();
+			}
+		}
+	} else { // Windows SnippingTool is not available, so use our custom implementation
+		// Let the user select a region on the screen
+		RECT region;
+		if( selectRegion( &region ) == EXIT_SUCCESS ) { 
+			POINT topLeft = { region.left, region.top };
+			POINT bottomRight = { region.right, region.bottom };
+
+			// Enforce a minumum size (to avoid ending up with an image you can't even see in the annotation window)
+			if( bottomRight.x - topLeft.x < 32 ) {
+				bottomRight.x = topLeft.x + 32;
+			}
+			if( bottomRight.y - topLeft.y < 32 ) {
+				bottomRight.y = topLeft.y + 32;
+			}
+			
+			// Grab a bitmap of the selected region
+			snippet = grabSnippet( topLeft, bottomRight );
+			snippetScale = getSnippetScaling( topLeft, bottomRight );
+		}
+	}
+	
+	if( snippet ) {
+		// Let the user annotate the screen snippet with drawings
+		int result = EXIT_SUCCESS;
+		if( annotate ) {
+			result = makeAnnotations( monitor, snippet, snippetScale, lang );
+		}
 		
 		if( result == EXIT_SUCCESS ) {
 			// Save bitmap
@@ -233,13 +256,13 @@ int main( int argc, char* argv[] ) {
 			}
 		}
 
-        DeleteObject( snippet );
-    }
-
-    Gdiplus::GdiplusShutdown( gdiplusToken );
-    if( foregroundWindow ) {
-        SetForegroundWindow( foregroundWindow );
-    }
+		DeleteObject( snippet );
+	}
+	
+	Gdiplus::GdiplusShutdown( gdiplusToken );
+	if( foregroundWindow ) {
+		SetForegroundWindow( foregroundWindow );
+	}
 
     if( user32lib ) {
         FreeLibrary( user32lib );

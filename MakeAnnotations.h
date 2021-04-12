@@ -458,7 +458,14 @@ HBITMAP WINAPI penIcon( Gdiplus::Pen* pen, BOOL highlight = FALSE ) {
 }
 
 
-int makeAnnotations( HMONITOR monitor, HBITMAP snippet, RECT bounds, float snippetScale, int lang ) {
+int makeAnnotations( HMONITOR monitor, HBITMAP snippet, float snippetScale, int lang ) {
+    RECT bounds = { 0, 0, 0, 0 };
+    
+    BITMAP bmp;  
+    GetObject( snippet, sizeof( BITMAP ), &bmp );
+    bounds.right = bmp.bmWidth;
+    bounds.bottom = bmp.bmHeight;
+    
     HICON icon = LoadIcon( GetModuleHandleA( NULL ), MAKEINTRESOURCE( IDR_ICON ) );
     
     // Register window class
