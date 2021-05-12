@@ -126,6 +126,52 @@ static BOOL CALLBACK closeExistingInstance( HWND hwnd, LPARAM lparam ) {
     return TRUE;
 }
 
+
+typedef void (WINAPI * RtlGetVersion_FUNC) (OSVERSIONINFOEXW *);
+
+
+BOOL GetVersion(OSVERSIONINFOEX * os) {
+    HMODULE hMod;
+    RtlGetVersion_FUNC func;
+    #ifdef UNICODE
+        OSVERSIONINFOEXW * osw = os;
+    #else
+        OSVERSIONINFOEXW o;
+        OSVERSIONINFOEXW * osw = &o;
+    #endif
+
+    hMod = LoadLibrary(TEXT("ntdll.dll"));
+    if (hMod) {
+        func = (RtlGetVersion_FUNC)GetProcAddress(hMod, "RtlGetVersion");
+        if (func == 0) {
+            FreeLibrary(hMod);
+            return FALSE;
+        }
+        ZeroMemory(osw, sizeof (*osw));
+        osw->dwOSVersionInfoSize = sizeof (*osw);
+        func(osw);
+        #ifndef UNICODE
+            os->dwBuildNumber = osw->dwBuildNumber;
+            os->dwMajorVersion = osw->dwMajorVersion;
+            os->dwMinorVersion = osw->dwMinorVersion;
+            os->dwPlatformId = osw->dwPlatformId;
+            os->dwOSVersionInfoSize = sizeof (*os);
+            DWORD sz = sizeof (os->szCSDVersion);
+            WCHAR * src = osw->szCSDVersion;
+            unsigned char * dtc = (unsigned char *)os->szCSDVersion;
+            while (*src)
+                * Dtc++ = (unsigned char)* src++;
+            *Dtc = '\ 0';
+        #endif
+
+    } else {
+        return FALSE;
+    }
+    FreeLibrary(hMod);
+    return TRUE;
+}
+
+
 int main( int argc, char* argv[] ) {
 
     // Dynamic binding of functions not available on win 7
@@ -191,78 +237,88 @@ int main( int argc, char* argv[] ) {
         }
     }
 
-	// Start GDI+ (used for semi-transparent drawing and anti-aliased curve drawing)
-	Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-	ULONG_PTR gdiplusToken;
-	Gdiplus::GdiplusStartup( &gdiplusToken, &gdiplusStartupInput, NULL );
+    // Start GDI+ (used for semi-transparent drawing and anti-aliased curve drawing)
+    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+    ULONG_PTR gdiplusToken;
+    Gdiplus::GdiplusStartup( &gdiplusToken, &gdiplusStartupInput, NULL );
 
 
-	HBITMAP snippet = NULL;
-	float snippetScale = 1.0f;
+    HBITMAP snippet = NULL;
+    float snippetScale = 1.0f;
+    
+    BOOL isOldWindows = FALSE;
+    OSVERSIONINFOEX osvi;
+    memset( &osvi, 0, sizeof( osvi ) );
+    osvi.dwOSVersionInfoSize = sizeof(osvi);
+    if( GetVersion( &osvi ) ) {
+        if( osvi.dwMajorVersion < 10 || osvi.dwBuildNumber < 15002 ) {
+            isOldWindows = TRUE;
+        }
+    }
 
-	// Try to make use of built-in windows SnippingTool first
-	Wow64DisableWow64FsRedirection( NULL ); // Disable Wow64 redirection, so it works for both 32/64 bit builds
-	SHELLEXECUTEINFOA info = { sizeof( SHELLEXECUTEINFOA ) };
-	info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
-	info.lpFile = "SnippingTool";
-	info.lpParameters = "/clip";
-	info.nShow = SW_SHOWNORMAL ;	
-	if( ShellExecuteExA( &info ) ) {
-		WaitForSingleObject( info.hProcess, INFINITE );
-		if( IsClipboardFormatAvailable( CF_BITMAP ) ) {
-			if( OpenClipboard( NULL ) ) {
-				snippet = (HBITMAP) GetClipboardData( CF_BITMAP );
-				CloseClipboard();
-			}
-		}
-	} else { // Windows SnippingTool is not available, so use our custom implementation
-		// Let the user select a region on the screen
-		RECT region;
-		if( selectRegion( &region ) == EXIT_SUCCESS ) { 
-			POINT topLeft = { region.left, region.top };
-			POINT bottomRight = { region.right, region.bottom };
+    // Try to make use of built-in windows SnippingTool first
+    Wow64DisableWow64FsRedirection( NULL ); // Disable Wow64 redirection, so it works for both 32/64 bit builds
+    SHELLEXECUTEINFOA info = { sizeof( SHELLEXECUTEINFOA ) };
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+    info.lpFile = "SnippingTool";
+    info.lpParameters = "/clip";
+    info.nShow = SW_SHOWNORMAL ;    
+    if( !isOldWindows && ShellExecuteExA( &info ) ) {
+        WaitForSingleObject( info.hProcess, INFINITE );
+        if( IsClipboardFormatAvailable( CF_BITMAP ) ) {
+            if( OpenClipboard( NULL ) ) {
+                snippet = (HBITMAP) GetClipboardData( CF_BITMAP );
+                CloseClipboard();
+            }
+        }
+    } else { // Windows SnippingTool is not available, so use our custom implementation
+        // Let the user select a region on the screen
+        RECT region;
+        if( selectRegion( &region ) == EXIT_SUCCESS ) { 
+            POINT topLeft = { region.left, region.top };
+            POINT bottomRight = { region.right, region.bottom };
 
-			// Enforce a minumum size (to avoid ending up with an image you can't even see in the annotation window)
-			if( bottomRight.x - topLeft.x < 32 ) {
-				bottomRight.x = topLeft.x + 32;
-			}
-			if( bottomRight.y - topLeft.y < 32 ) {
-				bottomRight.y = topLeft.y + 32;
-			}
-			
-			// Grab a bitmap of the selected region
-			snippet = grabSnippet( topLeft, bottomRight );
-			snippetScale = getSnippetScaling( topLeft, bottomRight );
-		}
-	}
-	
-	if( snippet ) {
-		// Let the user annotate the screen snippet with drawings
-		int result = EXIT_SUCCESS;
-		if( annotate ) {
-			result = makeAnnotations( monitor, snippet, snippetScale, lang );
-		}
-		
-		if( result == EXIT_SUCCESS ) {
-			// Save bitmap
-			Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
-			CLSID pngClsid;
-			if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
-				size_t len = strlen( argv[ 1 ] );
-				wchar_t* filename = filename = new wchar_t[ len + 1 ];
-				mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
-				bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
-				delete[] filename;
-			}
-		}
+            // Enforce a minumum size (to avoid ending up with an image you can't even see in the annotation window)
+            if( bottomRight.x - topLeft.x < 32 ) {
+                bottomRight.x = topLeft.x + 32;
+            }
+            if( bottomRight.y - topLeft.y < 32 ) {
+                bottomRight.y = topLeft.y + 32;
+            }
+            
+            // Grab a bitmap of the selected region
+            snippet = grabSnippet( topLeft, bottomRight );
+            snippetScale = getSnippetScaling( topLeft, bottomRight );
+        }
+    }
+    
+    if( snippet ) {
+        // Let the user annotate the screen snippet with drawings
+        int result = EXIT_SUCCESS;
+        if( annotate ) {
+            result = makeAnnotations( monitor, snippet, snippetScale, lang );
+        }
+        
+        if( result == EXIT_SUCCESS ) {
+            // Save bitmap
+            Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
+            CLSID pngClsid;
+            if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
+                size_t len = strlen( argv[ 1 ] );
+                wchar_t* filename = filename = new wchar_t[ len + 1 ];
+                mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
+                bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
+                delete[] filename;
+            }
+        }
 
-		DeleteObject( snippet );
-	}
-	
-	Gdiplus::GdiplusShutdown( gdiplusToken );
-	if( foregroundWindow ) {
-		SetForegroundWindow( foregroundWindow );
-	}
+        DeleteObject( snippet );
+    }
+    
+    Gdiplus::GdiplusShutdown( gdiplusToken );
+    if( foregroundWindow ) {
+        SetForegroundWindow( foregroundWindow );
+    }
 
     if( user32lib ) {
         FreeLibrary( user32lib );
