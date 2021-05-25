@@ -4,7 +4,7 @@ IDR_PEN               CURSOR                    "pen.cur"
 IDR_ERASER            CURSOR                    "eraser.cur"
 
 #define VER_MAJOR 2
-#define VER_MINOR 1
+#define VER_MINOR 2
 #define VER_REVISION 0
 
 
