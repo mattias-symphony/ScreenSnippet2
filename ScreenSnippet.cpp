@@ -172,7 +172,7 @@ BOOL GetVersion(OSVERSIONINFOEX * os) {
 }
 
 
-int main( int argc, char* argv[] ) {
+int wmain( int argc, wchar_t* argv[] ) {
 
     // Dynamic binding of functions not available on win 7
     HMODULE user32lib = LoadLibraryA( "user32.dll" );
@@ -218,7 +218,7 @@ int main( int argc, char* argv[] ) {
 
     bool annotate = true;
     // Check for --no-annotate switch
-    if( argc > 1 && strcmp( argv[ 1 ], "--no-annotate" ) == 0 ) {
+    if( argc > 1 && wcscmp( argv[ 1 ], L"--no-annotate" ) == 0 ) {
         annotate = false;
         // Skip the --no-annotate argument in the remaining code
         argv++; 
@@ -228,9 +228,9 @@ int main( int argc, char* argv[] ) {
     // Find language matching command line arg
     int lang = 0; // default to 'en-US'
     if( argc == 3 ) {
-        char const* lang_str = argv[ 2 ];
+        wchar_t const* lang_str = argv[ 2 ];
         for( int i = 0; i < sizeof( localization ) / sizeof( *localization ); ++i ) {
-            if( _stricmp( localization[ i ].language, lang_str ) == 0 ) {
+            if( wcsicmp( localization[ i ].language, lang_str ) == 0 ) {
                 lang = i;
                 break;
             }
@@ -304,9 +304,7 @@ int main( int argc, char* argv[] ) {
             Gdiplus::Bitmap bmp( snippet, (HPALETTE)0 );
             CLSID pngClsid;
             if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
-                size_t len = strlen( argv[ 1 ] );
-                wchar_t* filename = filename = new wchar_t[ len + 1 ];
-                mbstowcs_s( 0, filename, len + 1, argv[ 1 ], len );
+                wchar_t* filename = argv[ 1 ];
                 bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
                 delete[] filename;
             }
@@ -334,6 +332,10 @@ int main( int argc, char* argv[] ) {
 
 // pass-through so the program will build with either /SUBSYSTEM:WINDOWS or /SUBSYSTEM:CONSOLE
 extern "C" int __stdcall WinMain( struct HINSTANCE__*, struct HINSTANCE__*, char*, int ) { 
-    return main( __argc, __argv ); 
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW( GetCommandLine(), &argc );
+    int result = wmain( argc, argv ); 
+	LocalFree( argv );
+	return result;
 }
 
