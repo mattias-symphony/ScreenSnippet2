@@ -311,7 +311,6 @@ int wmain( int argc, wchar_t* argv[] ) {
             if( GetEncoderClsid( L"image/png", &pngClsid ) >= 0 ) {
                 wchar_t* filename = argv[ 1 ];
                 bmp.Save( filename ? filename : L"test_image.png", &pngClsid, NULL );
-                delete[] filename;
             }
         }
 
