@@ -263,6 +263,11 @@ int wmain( int argc, wchar_t* argv[] ) {
     info.lpFile = "SnippingTool";
     info.lpParameters = "/clip";
     info.nShow = SW_SHOWNORMAL ;    
+    if( !isOldWindows ) {
+        OpenClipboard( NULL );
+        EmptyClipboard();
+        CloseClipboard();
+    }
     if( !isOldWindows && ShellExecuteExA( &info ) ) {
         WaitForSingleObject( info.hProcess, INFINITE );
         if( IsClipboardFormatAvailable( CF_BITMAP ) ) {
@@ -335,7 +340,7 @@ extern "C" int __stdcall WinMain( struct HINSTANCE__*, struct HINSTANCE__*, char
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW( GetCommandLine(), &argc );
     int result = wmain( argc, argv ); 
-	LocalFree( argv );
-	return result;
+    LocalFree( argv );
+    return result;
 }
 
