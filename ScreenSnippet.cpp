@@ -9,11 +9,14 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <math.h>
+#include <d3d9.h>
+//#include <d3dx9.h>
 
 #pragma comment( lib, "user32.lib" )
 #pragma comment( lib, "gdi32.lib" )
 #pragma comment( lib, "gdiplus.lib" )
 #pragma comment( lib, "shell32.lib" )
+#pragma comment( lib, "d3d9.lib" )
 
 #define WINDOW_CLASS_NAME L"SymphonyScreenSnippetTool"
 
@@ -64,8 +67,8 @@ float getSnippetScaling( POINT topLeft, POINT bottomRight ) {
 }
 
 
-// Grab a section of the screen
-static HBITMAP grabSnippet( POINT topLeft, POINT bottomRight ) {
+// Grab a section of the screen using Windows GDI
+static HBITMAP grabSnippetGDI( POINT topLeft, POINT bottomRight ) {
     HDC screen = GetDC( NULL );
     HDC dc = CreateCompatibleDC( screen );
     HBITMAP snippet = CreateCompatibleBitmap( screen, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y );
@@ -80,6 +83,103 @@ static HBITMAP grabSnippet( POINT topLeft, POINT bottomRight ) {
     return snippet;
 }
 
+
+// Grab a section of the screen using DirectX 9
+static HBITMAP grabSnippetDX9( POINT topLeft, POINT bottomRight ) {
+    IDirect3DDevice9*   device = NULL;
+    IDirect3DSurface9*  surface = NULL;
+
+    IDirect3D9* d3d = Direct3DCreate9(D3D_SDK_VERSION);
+    if( !d3d ) {
+        return NULL;
+    }
+
+    D3DDISPLAYMODE  ddm;
+    if( FAILED( d3d->GetAdapterDisplayMode( D3DADAPTER_DEFAULT, &ddm ) ) ) {
+        d3d->Release();
+        return NULL;
+    }
+
+    D3DPRESENT_PARAMETERS   d3dpp;
+    memset( &d3dpp, 0, sizeof( D3DPRESENT_PARAMETERS ) );
+    d3dpp.Windowed = TRUE;
+    d3dpp.Flags = D3DPRESENTFLAG_LOCKABLE_BACKBUFFER;
+    d3dpp.BackBufferFormat = ddm.Format;
+    d3dpp.BackBufferHeight = ddm.Height;
+    d3dpp.BackBufferWidth = ddm.Width;
+    d3dpp.MultiSampleType = D3DMULTISAMPLE_NONE;
+    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    d3dpp.hDeviceWindow = GetDesktopWindow();
+    d3dpp.PresentationInterval = D3DPRESENT_INTERVAL_DEFAULT;
+    d3dpp.FullScreen_RefreshRateInHz = D3DPRESENT_RATE_DEFAULT;
+
+    if( FAILED( d3d->CreateDevice( D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, GetDesktopWindow(), D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device ) ) ) {
+        d3d->Release();
+        return NULL;
+    }
+
+    if( FAILED( device->CreateOffscreenPlainSurface( ddm.Width, ddm.Height, D3DFMT_A8R8G8B8, D3DPOOL_SCRATCH, &surface, NULL ) ) ) {
+        device->Release();
+        d3d->Release();
+        return NULL;
+    }
+    
+    device->GetFrontBufferData( 0, surface );           
+    D3DLOCKED_RECT rect;
+    RECT region = { topLeft.x, topLeft.y, bottomRight.x, bottomRight.y };   
+    if( FAILED( surface->LockRect( &rect, &region, D3DLOCK_NO_DIRTY_UPDATE | D3DLOCK_NOSYSLOCK | D3DLOCK_READONLY ) ) ) {
+        surface->Release();
+        device->Release();
+        d3d->Release();
+        return NULL;
+    }
+    
+    uint32_t* buffer = (uint32_t*) malloc( sizeof( uint32_t ) * ( bottomRight.x - topLeft.x ) * ( bottomRight.y - topLeft.y ) );
+    for( int i = 0; i <  bottomRight.y - topLeft.y; ++i ) {
+         memcpy( buffer + i * ( bottomRight.x - topLeft.x ), ( (uint8_t*)rect.pBits ) + i * rect.Pitch, sizeof( uint32_t ) * ( bottomRight.x - topLeft.x ) );
+    }
+
+
+    // TEMP - REMOVE 
+    for( int i = 0; i <  bottomRight.y - topLeft.y; ++i ) {
+         buffer[ i * ( bottomRight.x - topLeft.x ) ] = 0xffff00ff;
+         buffer[ ( i + 1 ) * ( bottomRight.x - topLeft.x ) - 1 ] = 0xffff00ff;
+    }
+    for( int i = 0; i <  bottomRight.x - topLeft.x; ++i ) {
+         buffer[ i  ] = 0xffff00ff;
+         buffer[ i + ( bottomRight.x - topLeft.x ) * ( bottomRight.y - topLeft.y - 1 ) ] = 0xffff00ff;
+    }
+    // END TEMP
+    
+
+    surface->UnlockRect();
+    surface->Release();
+    device->Release();
+    d3d->Release();
+
+    HDC screen = GetDC( NULL );
+    HDC dc = CreateCompatibleDC( screen );
+    HBITMAP snippet = CreateCompatibleBitmap( screen, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y );
+
+    BITMAPINFO info;
+    info.bmiHeader.biSize          = sizeof(BITMAPINFO) - sizeof(RGBQUAD);
+    info.bmiHeader.biWidth         = bottomRight.x - topLeft.x;
+    info.bmiHeader.biHeight        = 0 - (int)( bottomRight.y - topLeft.y );
+    info.bmiHeader.biPlanes        = 1;
+    info.bmiHeader.biBitCount      = 32;
+    info.bmiHeader.biCompression   = BI_RGB;
+    info.bmiHeader.biSizeImage     = 0;
+    info.bmiHeader.biXPelsPerMeter = 0;
+    info.bmiHeader.biYPelsPerMeter = 0;
+    info.bmiHeader.biClrUsed       = 0;
+    info.bmiHeader.biClrImportant  = 0;
+    SetDIBits( dc, snippet, 0, bottomRight.y - topLeft.y, buffer, &info, DIB_RGB_COLORS );
+    DeleteDC( dc );
+    ReleaseDC( NULL, screen );
+    free( buffer );
+
+    return snippet;
+}
 
 
 // Utility function used to get an encoder for PNG image format
@@ -202,24 +302,27 @@ int wmain( int argc, wchar_t* argv[] ) {
     float snippetScale = 1.0f;
 
     // Try to make use of built-in windows SnippingTool first
-	// Let the user select a region on the screen
-	RECT region;
-	if( selectRegion( &region ) == EXIT_SUCCESS ) { 
-		POINT topLeft = { region.left, region.top };
-		POINT bottomRight = { region.right, region.bottom };
+    // Let the user select a region on the screen
+    RECT region;
+    if( selectRegion( &region ) == EXIT_SUCCESS ) { 
+        POINT topLeft = { region.left, region.top };
+        POINT bottomRight = { region.right, region.bottom };
 
-		// Enforce a minumum size (to avoid ending up with an image you can't even see in the annotation window)
-		if( bottomRight.x - topLeft.x < 32 ) {
-			bottomRight.x = topLeft.x + 32;
-		}
-		if( bottomRight.y - topLeft.y < 32 ) {
-			bottomRight.y = topLeft.y + 32;
-		}
-		
-		// Grab a bitmap of the selected region
-		snippet = grabSnippet( topLeft, bottomRight );
-		snippetScale = getSnippetScaling( topLeft, bottomRight );
-	}
+        // Enforce a minumum size (to avoid ending up with an image you can't even see in the annotation window)
+        if( bottomRight.x - topLeft.x < 32 ) {
+            bottomRight.x = topLeft.x + 32;
+        }
+        if( bottomRight.y - topLeft.y < 32 ) {
+            bottomRight.y = topLeft.y + 32;
+        }
+        
+        // Grab a bitmap of the selected region
+        snippet = grabSnippetDX9( topLeft, bottomRight );
+        if( !snippet ) {
+            snippet = grabSnippetGDI( topLeft, bottomRight );
+        }
+        snippetScale = getSnippetScaling( topLeft, bottomRight );
+    }
     
     if( snippet ) {
         // Let the user annotate the screen snippet with drawings
